@@ -3,7 +3,7 @@ import requests
 import threading
 import time
 
-BOT_TOKEN = "YOUR_BOT_TOKEN"
+BOT_TOKEN = "8913220765:AAG_Ncc_PqgbG6-mLSOklcDeX_-HRed41Wc"
 CHAT_ID = "YOUR_CHAT_ID"
 
 app = Flask(__name__)
