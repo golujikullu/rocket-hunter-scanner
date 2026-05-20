@@ -1,17 +1,30 @@
+from flask import Flask
 import requests
+import threading
 
 BOT_TOKEN = "8913220765:AAHjkhBDmUylbcsfnGZhZFmtt_4rVKKt5mQ"
 CHAT_ID = "6112546554"
 
-message = "🚀 Rocket Hunter Scanner LIVE TEST"
+app = Flask(__name__)
 
-url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+def send_message():
+    message = "🚀 Rocket Hunter Scanner LIVE TEST"
 
-payload = {
-    "chat_id": CHAT_ID,
-    "text": message
-}
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-response = requests.post(url, data=payload)
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message
+    }
 
-print(response.text)
+    response = requests.post(url, data=payload)
+    print(response.text)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+threading.Thread(target=send_message).start()
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
