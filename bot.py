@@ -4,7 +4,7 @@ import threading
 import time
 
 BOT_TOKEN = "8913220765:AAG_Ncc_PqgbG6-mLSOklcDeX_-HRed41Wc"
-CHAT_ID = "YOUR_CHAT_ID"
+CHAT_ID = "6112546554"
 
 app = Flask(__name__)
 
