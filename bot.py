@@ -1,7 +1,7 @@
 import requests
 
-BOT_TOKEN = "PASTE_BOT_TOKEN_HERE"
-CHAT_ID = "PASTE_CHANNEL_ID_HERE"
+BOT_TOKEN = "8913220765:AAHjkhBDmUylbcsfnGZhZFmtt_4rVKKt5mQ"
+CHAT_ID = "6112546554"
 
 message = "🚀 Rocket Hunter Scanner LIVE TEST"
 
