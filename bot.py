@@ -17,22 +17,28 @@ def webhook():
 
     data = request.get_json(force=True)
 
-    if "message" in data:
+    print(data)
 
+    try:
         chat_id = data["message"]["chat"]["id"]
 
         text = data["message"].get("text", "")
 
         if text == "/start":
 
-            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            send_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
             payload = {
                 "chat_id": chat_id,
                 "text": "🚀 Rocket Hunter Activated"
             }
 
-            requests.post(url, json=payload)
+            r = requests.post(send_url, json=payload)
+
+            print(r.text)
+
+    except Exception as e:
+        print("ERROR:", e)
 
     return "ok", 200
 
