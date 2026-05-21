@@ -1,205 +1,116 @@
-import os
-from flask import Flask
+from flask import Flask, request
 import requests
-import threading
 import time
+import os
 
-# =========================================
-# ROCKET HUNTER V2 FOUNDATION
-# =========================================
-
-# Telegram ENV variables
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
-
-# Core Filters
-ALLOWED_CHAIN = "solana"
-MIN_LIQUIDITY_USD = 10000
-
-# Correct DexScreener API Endpoint
-DEX_API_URL = "https://api.dexscreener.com/latest/dex/search/?q=solana"
-
-# Flask App Setup
 app = Flask(__name__)
 
-# Render Health Endpoint
-@app.route('/')
-def health_check():
-    return "Rocket Hunter V2 Core Engine is Awake 24/7! 🚀", 200
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
-# Duplicate suppression memory
 sent_tokens = set()
 
-# =========================================
-# TELEGRAM ALERT SYSTEM
-# =========================================
 
-def send_telegram(pair):
-
-    name = pair.get("baseToken", {}).get("name", "Unknown")
-    symbol = pair.get("baseToken", {}).get("symbol", "XYZ")
-
-    liquidity = float(
-        pair.get("liquidity", {}).get("usd", 0)
-    )
-
-    volume = float(
-        pair.get("volume", {}).get("h24", 0)
-    )
-
-    price = pair.get("priceUsd", "0")
-
-    dex_url = pair.get("url", "")
-
-    # Mobile-first clean alert
-    message = (
-        f"🚀 *Rocket Hunter Alert*\n\n"
-
-        f"🪙 *Token:* {name} ({symbol})\n"
-        f"💵 *Price:* ${price}\n"
-        f"💧 *Liquidity:* ${liquidity:,.0f}\n"
-        f"📈 *24H Volume:* ${volume:,.0f}\n\n"
-
-        f"🛡 *Safety:* ⚠️ UNVERIFIED\n"
-        f"✅ *Chain:* Solana Only\n\n"
-
-        f"🔗 *DexScreener:*\n{dex_url}"
-    )
+def send_message(text):
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     payload = {
         "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True
+        "text": text,
+        "parse_mode": "HTML"
     }
+
+    requests.post(url, json=payload)
+
+
+def scan_tokens():
 
     try:
 
-        response = requests.post(
-            url,
-            json=payload
-        )
+        url = "https://api.dexscreener.com/latest/dex/pairs/solana"
 
-        if response.status_code == 200:
-            print(f"[ALERT SENT] {symbol}")
+        response = requests.get(url).json()
 
-        else:
-            print("Telegram API Error:", response.text)
+        pairs = response.get("pairs", [])
+
+        for pair in pairs[:20]:
+
+            name = pair.get("baseToken", {}).get("name", "Unknown")
+
+            symbol = pair.get("baseToken", {}).get("symbol", "")
+
+            pair_url = pair.get("url", "")
+
+            liquidity = float(
+                pair.get("liquidity", {}).get("usd", 0)
+            )
+
+            volume = float(
+                pair.get("volume", {}).get("h24", 0)
+            )
+
+            key = f"{name}_{symbol}"
+
+            if key in sent_tokens:
+                continue
+
+            if liquidity > 5000 and volume > 10000:
+
+                text = f"""
+🚀 <b>Rocket Hunter Alert</b>
+
+💎 {name} ({symbol})
+
+💧 Liquidity: ${liquidity:,.0f}
+📈 Volume 24h: ${volume:,.0f}
+
+🔗 {pair_url}
+"""
+
+                send_message(text)
+
+                sent_tokens.add(key)
 
     except Exception as e:
 
-        print("Telegram Error:", e)
+        print("ERROR:", e)
 
-# =========================================
-# HARD FILTER LAYER
-# =========================================
 
-def passes_filters(pair):
+@app.route("/")
+def home():
+    return "Rocket Hunter Running 🚀"
 
-    # Solana-only filter
-    if pair.get("chainId") != ALLOWED_CHAIN:
-        return False
 
-    # Liquidity filter
-    liquidity = pair.get(
-        "liquidity",
-        {}
-    ).get("usd", 0)
+@app.route("/webhook", methods=["POST"])
+def webhook():
 
-    if float(liquidity) < MIN_LIQUIDITY_USD:
-        return False
+    data = request.get_json(force=True)
 
-    return True
+    if "message" in data:
 
-# =========================================
-# MAIN SCANNER LOOP
-# =========================================
+        chat_id = data["message"]["chat"]["id"]
 
-def scan_trending():
+        text = data["message"].get("text", "")
 
-    while True:
+        if text == "/start":
 
-        try:
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-            response = requests.get(
-                DEX_API_URL,
-                timeout=15
-            )
+            payload = {
+                "chat_id": chat_id,
+                "text": "🚀 Rocket Hunter Activated!"
+            }
 
-            if response.status_code != 200:
+            requests.post(url, json=payload)
 
-                print(
-                    "Dex API Error:",
-                    response.status_code
-                )
+    return "ok", 200
 
-                time.sleep(60)
-                continue
-
-            data = response.json()
-
-            pairs = data.get("pairs", [])
-
-            print(f"Found {len(pairs)} pairs")
-
-            for pair in pairs[:10]:
-
-                token_address = pair.get(
-                    "baseToken",
-                    {}
-                ).get("address")
-
-                if not token_address:
-                    continue
-
-                # Duplicate suppression
-                if token_address in sent_tokens:
-                    continue
-
-                # Hard filter gate
-                if not passes_filters(pair):
-                    continue
-
-                # Send alert
-                send_telegram(pair)
-
-                # Save memory
-                sent_tokens.add(token_address)
-
-            # Scan every 5 min
-            time.sleep(300)
-
-        except Exception as e:
-
-            print("Scanner Loop Error:", e)
-
-            time.sleep(60)
-
-# =========================================
-# START BACKGROUND SCANNER
-# =========================================
-
-scanner_thread = threading.Thread(
-    target=scan_trending
-)
-
-scanner_thread.daemon = True
-
-scanner_thread.start()
-
-# =========================================
-# START FLASK SERVER
-# =========================================
 
 if __name__ == "__main__":
 
-    port = int(
-        os.environ.get("PORT", 10000)
-    )
+    while True:
 
-    app.run(
-        host='0.0.0.0',
-        port=port
-    )
+        scan_tokens()
+
+        time.sleep(300)
