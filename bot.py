@@ -107,10 +107,8 @@ def webhook():
     return "ok", 200
 
 
-if __name__ == "__main__":
 
-    while True:
 
-        scan_tokens()
+       if __name__ == "__main__":
 
-        time.sleep(300)
+    app.run(host="0.0.0.0", port=10000)                                        0)
