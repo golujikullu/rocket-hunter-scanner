@@ -3,7 +3,6 @@ import time
 import threading
 from flask import Flask
 import os
-import sys
 
 app = Flask(__name__)
 
@@ -26,6 +25,10 @@ DEX_URL = "https://api.dexscreener.com/latest/dex/pairs/solana"
 
 def send_telegram(message):
 
+    if not BOT_TOKEN or not CHAT_ID:
+        print("❌ BOT TOKEN OR CHAT ID MISSING", flush=True)
+        return
+
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     data = {
@@ -33,10 +36,13 @@ def send_telegram(message):
         "text": message
     }
 
-    response = requests.post(url, data=data)
+    try:
+        response = requests.post(url, data=data)
 
-    print("TELEGRAM STATUS:", response.status_code, flush=True)
-    print("TELEGRAM RESPONSE:", response.text, flush=True)
+        print("📩 TELEGRAM RESPONSE:", response.text, flush=True)
+
+    except Exception as e:
+        print("❌ TELEGRAM ERROR:", e, flush=True)
 
 # =========================
 # TOKEN SCANNER
@@ -44,58 +50,25 @@ def send_telegram(message):
 
 def scan_tokens():
 
-    print("[SCAN STARTED]", flush=True)
+    print("🔍 SCANNING TOKENS...", flush=True)
 
     try:
 
         response = requests.get(DEX_URL)
 
-        data = response.json()
+        print("✅ API STATUS:", response.status_code, flush=True)
 
-        pairs = data.get("pairs", [])
+        if response.status_code == 200:
 
-        print(f"TOTAL PAIRS FOUND: {len(pairs)}", flush=True)
+            message = "🚀 Rocket Hunter Running Successfully"
 
-        for pair in pairs[:5]:
+            send_telegram(message)
 
-            try:
-
-                name = pair.get("baseToken", {}).get("name", "Unknown")
-                symbol = pair.get("baseToken", {}).get("symbol", "???")
-
-                liquidity = pair.get("liquidity", {}).get("usd", 0)
-
-                volume = pair.get("volume", {}).get("h24", 0)
-
-                price_change = pair.get("priceChange", {}).get("h24", 0)
-
-                link = pair.get("url", "")
-
-                message = f"""
-🚀 Rocket Hunter Alert
-
-🪙 Token: {name} ({symbol})
-
-💧 Liquidity: ${liquidity}
-📈 24H Volume: ${volume}
-🔥 24H Change: {price_change}%
-
-🔗 {link}
-"""
-
-                print(f"ALERT SENT: {symbol}", flush=True)
-
-                send_telegram(message)
-
-                time.sleep(3)
-
-            except Exception as e:
-
-                print("PAIR ERROR:", e, flush=True)
+        else:
+            print("❌ API FAILED", flush=True)
 
     except Exception as e:
-
-        print("SCAN ERROR:", e, flush=True)
+        print("❌ SCAN ERROR:", e, flush=True)
 
 # =========================
 # LOOP
@@ -105,21 +78,16 @@ def scan_loop():
 
     while True:
 
-        print("[SCAN RUNNING]", flush=True)
-
         scan_tokens()
-
-        print("[WAITING 60 SECONDS]", flush=True)
 
         time.sleep(60)
 
 # =========================
-# FLASK SERVER
+# FLASK
 # =========================
 
 @app.route("/")
 def home():
-
     return "Rocket Hunter Live 🚀"
 
 # =========================
@@ -129,16 +97,6 @@ def home():
 if __name__ == "__main__":
 
     print("🚀 ROCKET HUNTER STARTING...", flush=True)
-
-    try:
-
-        send_telegram("🚀 Rocket Hunter Test Alert Working!")
-
-        print("✅ TEST ALERT SENT", flush=True)
-
-    except Exception as e:
-
-        print("❌ TELEGRAM ERROR:", e, flush=True)
 
     scanner_worker = threading.Thread(target=scan_loop)
 
