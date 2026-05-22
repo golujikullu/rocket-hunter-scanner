@@ -15,10 +15,10 @@ CHAT_ID = os.getenv("CHAT_ID")
 
 # =========================
 # DUPLICATE FILTER
-# same token 2 ghante baad hi repeat hoga
 # =========================
 
-seen_tokens = {}   # {token_id: timestamp}
+seen_tokens = {}
+
 COOLDOWN_SECONDS = 7200   # 2 hours
 
 # =========================
@@ -28,7 +28,12 @@ COOLDOWN_SECONDS = 7200   # 2 hours
 def send_telegram(message):
 
     if not BOT_TOKEN or not CHAT_ID:
-        print("❌ BOT TOKEN OR CHAT ID MISSING", flush=True)
+
+        print(
+            "❌ BOT TOKEN OR CHAT ID MISSING",
+            flush=True
+        )
+
         return
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -68,16 +73,19 @@ def send_telegram(message):
 
 def scan_tokens():
 
-    print("🔍 SCANNING TOKENS...", flush=True)
+    print(
+        "🔍 SCANNING TOKENS...",
+        flush=True
+    )
 
     try:
 
-        # CORRECT API URL
-        url = "https://api.dexscreener.com/latest/dex/search?q=solana"
+        # NEW TOKEN PROFILES API
+        url = "https://api.dexscreener.com/token-profiles/latest/v1"
 
         response = requests.get(
             url,
-            timeout=10
+            timeout=15
         )
 
         print(
@@ -90,16 +98,11 @@ def scan_tokens():
 
         data = response.json()
 
-        pairs = data.get("pairs", [])
-
-        # ONLY SOLANA PAIRS
-        solana_pairs = [
-            p for p in pairs
-            if p.get("chainId") == "solana"
-        ]
+        # API RETURNS LIST
+        pairs = data if isinstance(data, list) else []
 
         print(
-            f"📊 Solana pairs found: {len(solana_pairs)}",
+            f"📊 Tokens found: {len(pairs)}",
             flush=True
         )
 
@@ -107,63 +110,47 @@ def scan_tokens():
 
         alert_count = 0
 
-        for pair in solana_pairs:
+        for pair in pairs:
 
             try:
 
-                base = pair.get("baseToken", {})
+                chain_id = str(
+                    pair.get("chainId", "")
+                ).lower()
 
-                token_name = base.get(
-                    "name",
+                # ONLY SOLANA
+                if chain_id != "solana":
+                    continue
+
+                token_name = pair.get(
+                    "tokenName",
                     "Unknown"
                 )
 
-                token_symbol = base.get(
-                    "symbol",
+                token_symbol = pair.get(
+                    "tokenSymbol",
                     "???"
                 )
 
-                # TRACK TOKEN MINT ADDRESS
-                token_id = base.get("address")
+                token_id = pair.get(
+                    "tokenAddress"
+                )
+
+                pair_url = pair.get(
+                    "url",
+                    "https://dexscreener.com"
+                )
 
                 if not token_id:
                     continue
 
-                # SKIP BASE TOKENS
+                # SKIP MAJOR TOKENS
                 if token_symbol.upper() in [
                     "SOL",
                     "WSOL",
                     "USDC",
                     "USDT"
                 ]:
-                    continue
-
-                # =========================
-                # DATA
-                # =========================
-
-                liquidity = float(
-                    pair.get(
-                        "liquidity",
-                        {}
-                    ).get("usd") or 0
-                )
-
-                volume = float(
-                    pair.get(
-                        "volume",
-                        {}
-                    ).get("h24") or 0
-                )
-
-                # =========================
-                # FILTERS
-                # =========================
-
-                if liquidity < 500:
-                    continue
-
-                if volume < 100:
                     continue
 
                 # =========================
@@ -182,41 +169,6 @@ def scan_tokens():
                 seen_tokens[token_id] = now
 
                 # =========================
-                # EXTRA DATA
-                # =========================
-
-                price = pair.get(
-                    "priceUsd",
-                    "N/A"
-                )
-
-                price_change = float(
-                    pair.get(
-                        "priceChange",
-                        {}
-                    ).get("h24") or 0
-                )
-
-                pair_url = pair.get(
-                    "url",
-                    "https://dexscreener.com"
-                )
-
-                # =========================
-                # FORMAT
-                # =========================
-
-                liq_str = f"${int(liquidity):,}"
-
-                vol_str = f"${int(volume):,}"
-
-                change_icon = (
-                    "📈"
-                    if price_change > 0
-                    else "📉"
-                )
-
-                # =========================
                 # MESSAGE
                 # =========================
 
@@ -224,14 +176,6 @@ def scan_tokens():
 🚀 <b>Rocket Hunter Alert</b>
 
 💎 <b>{token_name} ({token_symbol})</b>
-
-💰 Price: ${price}
-
-💧 Liquidity: {liq_str}
-
-📊 Volume 24H: {vol_str}
-
-{change_icon} 24H Change: {price_change}%
 
 ⛓ Chain: Solana
 
@@ -249,7 +193,7 @@ def scan_tokens():
 
                 time.sleep(2)
 
-                # MAX 5 ALERTS
+                # MAX ALERTS
                 if alert_count >= 5:
                     break
 
@@ -292,7 +236,7 @@ def scan_loop():
         time.sleep(120)
 
 # =========================
-# FLASK
+# FLASK HEALTH ROUTE
 # =========================
 
 @app.route("/")
@@ -331,4 +275,4 @@ if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
         port=port
-    )
+    )    
