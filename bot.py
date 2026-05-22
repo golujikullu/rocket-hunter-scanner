@@ -131,23 +131,20 @@ def home():
 
 if __name__ == "__main__":
 
-    print("ROCKET HUNTER STARTING...")
+    print("🚀 ROCKET HUNTER STARTING...")
 
-    # TEST TELEGRAM
-    send_telegram("🚀 Rocket Hunter Test Alert")
+    try:
+        send_telegram("🚀 Rocket Hunter Test Alert")
+        print("✅ TEST ALERT SENT")
+    except Exception as e:
+        print("❌ TELEGRAM ERROR:", e)
 
-    print("TEST ALERT SENT")
-
-    # START SCANNER THREAD
     scanner_worker = threading.Thread(target=scan_loop)
-
     scanner_worker.daemon = True
-
     scanner_worker.start()
 
-    print("[SCAN THREAD STARTED]")
+    print("✅ SCAN THREAD STARTED")
 
-    # RENDER PORT
     port = int(os.environ.get("PORT", 10000))
 
     app.run(host="0.0.0.0", port=port)
