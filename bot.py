@@ -12,7 +12,7 @@ CHAT_ID = os.getenv("CHAT_ID")
 # Prevent duplicate spam
 sent_tokens = set()
 
-DEX_API = "https://api.dexscreener.com/latest/dex/search/?q=solana"
+DEX_API = "https://api.dexscreener.com/latest/dex/pairs/solana"
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -24,35 +24,23 @@ def send_telegram(message):
         "disable_web_page_preview": False
     }
 
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print("Telegram Error:", e)
+    requests.post(url, data=payload)
 
 @app.route("/")
 def home():
     return "Rocket Hunter Running 🚀"
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    return "OK", 200
-
 def scan_tokens():
     try:
-        response = requests.get(DEX_API, timeout=15)
+        response = requests.get(DEX_API)
         data = response.json()
 
         pairs = data.get("pairs", [])
 
         for pair in pairs:
 
-            # Solana only
-            if pair.get("chainId") != "solana":
-                continue
-
             liquidity = pair.get("liquidity", {}).get("usd", 0)
 
-            # Minimum liquidity filter
             if liquidity < 10000:
                 continue
 
