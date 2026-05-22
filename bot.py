@@ -97,6 +97,9 @@ def scan_loop():
 
         time.sleep(60)
 
-scanner_worker = threading.Thread(target=scan_loop)
-scanner_worker.daemon = True
-scanner_worker.start()
+if __name__ == "__main__":
+    scanner_worker = threading.Thread(target=scan_loop)
+    scanner_worker.daemon = True
+    scanner_worker.start()
+
+    app.run(host="0.0.0.0", port=10000)
