@@ -21,7 +21,7 @@ MAX_ALERTS_PER_SCAN = int(os.getenv("MAX_ALERTS_PER_SCAN", "5"))
 SEEN_FILE = os.getenv("SEEN_FILE", "/tmp/seen_tokens.json")
 
 # =========================
-# STORAGE
+# MEMORY
 # =========================
 
 seen_tokens = {}
@@ -50,16 +50,17 @@ BASE_TICKERS = {
 }
 
 # =========================
-# SESSION
+# REQUEST SESSION
 # =========================
 
 session = requests.Session()
+
 session.headers.update({
     "User-Agent": "RocketHunter/4.0"
 })
 
 # =========================
-# LOAD TOKENS
+# LOAD SEEN TOKENS
 # =========================
 
 def load_seen():
@@ -81,7 +82,7 @@ def load_seen():
         seen_tokens = {}
 
 # =========================
-# SAVE TOKENS
+# SAVE SEEN TOKENS
 # =========================
 
 def save_seen():
@@ -104,22 +105,22 @@ def save_seen():
 
 def prune_seen(now_ts):
 
-    remove_list = []
+    old_tokens = []
 
     for token_id, ts in list(seen_tokens.items()):
 
         try:
             if now_ts - float(ts) > (COOLDOWN_SECONDS * 2):
-                remove_list.append(token_id)
+                old_tokens.append(token_id)
 
         except Exception:
-            remove_list.append(token_id)
+            old_tokens.append(token_id)
 
-    for token_id in remove_list:
+    for token_id in old_tokens:
         seen_tokens.pop(token_id, None)
 
 # =========================
-# TELEGRAM
+# TELEGRAM ALERT
 # =========================
 
 def send_telegram(message):
@@ -138,12 +139,7 @@ def send_telegram(message):
     }
 
     try:
-
-        response = session.post(
-            url,
-            json=payload,
-            timeout=20
-        )
+        response = session.post(url, json=payload, timeout=20)
 
         print(f"📨 TELEGRAM STATUS: {response.status_code}", flush=True)
 
@@ -158,7 +154,7 @@ def send_telegram(message):
         return False
 
 # =========================
-# DEXSCREENER API
+# FETCH TOKENS
 # =========================
 
 def get_tokens():
@@ -166,7 +162,6 @@ def get_tokens():
     url = "https://api.dexscreener.com/token-profiles/latest/v1"
 
     try:
-
         response = session.get(url, timeout=20)
 
         print(f"✅ API STATUS: {response.status_code}", flush=True)
@@ -189,7 +184,7 @@ def get_tokens():
         return []
 
 # =========================
-# FILTER CHECK
+# FILTER BAD TOKENS
 # =========================
 
 def should_skip(token_name, token_symbol, description_text):
@@ -200,7 +195,6 @@ def should_skip(token_name, token_symbol, description_text):
     lower_text = f"{token_name} {description_text}".lower()
 
     for word in BAD_WORDS:
-
         if word in lower_text:
             return True
 
@@ -214,8 +208,8 @@ def build_message(token_name, token_symbol, token_id, pair_url):
 
     short_name = token_name
 
-    if len(short_name) > 22:
-        short_name = short_name[:20] + "..."
+    if len(short_name) > 20:
+        short_name = short_name[:17] + "..."
 
     return f"""
 🚀 <b>Rocket Hunter Alert</b>
@@ -227,7 +221,7 @@ def build_message(token_name, token_symbol, token_id, pair_url):
 📌 <b>Mint:</b>
 <code>{token_id}</code>
 
-🔗 <a href="{pair_url}">DexScreener Link</a>
+🔗 <a href="{pair_url}">Trade on DexScreener</a>
 """
 
 # =========================
@@ -256,7 +250,7 @@ def scan_tokens():
 
                 chain = str(
                     token.get("chainId") or ""
-                ).lower()
+                ).lower().strip()
 
                 if chain != "solana":
                     continue
@@ -264,24 +258,25 @@ def scan_tokens():
                 token_name = str(
                     token.get("name")
                     or token.get("tokenName")
-                    or "Unknown"
+                    or ""
                 ).strip()
 
                 token_symbol = str(
                     token.get("symbol")
                     or token.get("tokenSymbol")
-                    or "???"
+                    or ""
                 ).strip()
 
                 token_id = str(
                     token.get("tokenAddress")
+                    or token.get("address")
                     or ""
                 ).strip()
 
                 description_text = str(
                     token.get("description")
                     or ""
-                )
+                ).strip()
 
                 pair_url = str(
                     token.get("url")
@@ -289,30 +284,35 @@ def scan_tokens():
                 ).strip()
 
                 # =========================
-                # EMPTY TOKEN FILTER
+                # EMPTY CHECKS
                 # =========================
+
+                if not token_symbol:
+                    print("⏭ SKIP EMPTY SYMBOL", flush=True)
+                    continue
+
+                if not token_name:
+                    print("⏭ SKIP EMPTY NAME", flush=True)
+                    continue
 
                 if not token_id:
                     print("⏭ SKIP EMPTY TOKEN ID", flush=True)
                     continue
 
-                if token_symbol == "???":
-                    print("⏭ SKIP EMPTY SYMBOL", flush=True)
-                    continue
-
-                if token_name.lower() == "unknown":
-                    print("⏭ SKIP UNKNOWN TOKEN", flush=True)
-                    continue
+                print(
+                    f"🔥 FOUND TOKEN: {token_name} | {token_symbol}",
+                    flush=True
+                )
 
                 # =========================
-                # FALLBACKS
+                # DEFAULT URL
                 # =========================
 
                 if not pair_url:
                     pair_url = f"https://dexscreener.com/solana/{token_id}"
 
                 # =========================
-                # BAD TOKEN FILTER
+                # FILTERS
                 # =========================
 
                 if should_skip(
@@ -320,12 +320,11 @@ def scan_tokens():
                     token_symbol,
                     description_text
                 ):
-
-                    print(f"⏭ SKIP BAD TOKEN: {token_name}", flush=True)
+                    print(f"⏭ FILTERED: {token_name}", flush=True)
                     continue
 
                 # =========================
-                # COOLDOWN CHECK
+                # COOLDOWN
                 # =========================
 
                 last_seen = float(
@@ -333,7 +332,7 @@ def scan_tokens():
                 )
 
                 if now_ts - last_seen < COOLDOWN_SECONDS:
-                    print(f"⏭ COOLDOWN: {token_name}", flush=True)
+                    print(f"⏭ COOLDOWN: {token_symbol}", flush=True)
                     continue
 
                 # =========================
@@ -363,6 +362,10 @@ def scan_tokens():
                     )
 
                     time.sleep(2)
+
+                # =========================
+                # LIMIT ALERTS
+                # =========================
 
                 if alert_count >= MAX_ALERTS_PER_SCAN:
                     break
@@ -394,12 +397,15 @@ def scan_loop():
         except Exception as e:
             print("❌ LOOP ERROR:", e, flush=True)
 
-        print(f"[WAITING {SCAN_INTERVAL} SECONDS]", flush=True)
+        print(
+            f"[WAITING {SCAN_INTERVAL} SECONDS]",
+            flush=True
+        )
 
         time.sleep(SCAN_INTERVAL)
 
 # =========================
-# FLASK ROUTES
+# ROUTES
 # =========================
 
 @app.route("/")
