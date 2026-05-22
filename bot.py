@@ -160,10 +160,10 @@ def scan_tokens():
                 # FILTERS
                 # =========================
 
-                if liquidity < 1000:
+                if liquidity < 500:
                     continue
 
-                if volume < 500:
+                if volume < 100:
                     continue
 
                 # =========================
