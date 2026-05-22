@@ -26,7 +26,7 @@ def send_telegram(message):
 
     response = requests.post(url, data=payload)
 
-    print(response.text)
+    print("TELEGRAM RESPONSE:", response.text)
 
 @app.route("/")
 def home():
