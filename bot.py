@@ -3,6 +3,7 @@ import time
 import threading
 from flask import Flask
 import os
+import sys
 
 app = Flask(__name__)
 
@@ -17,91 +18,84 @@ CHAT_ID = os.getenv("CHAT_ID")
 # DEXSCREENER API
 # =========================
 
-DEX_API = "https://api.dexscreener.com/latest/dex/pairs/solana"
-
-# =========================
-# DUPLICATE STORAGE
-# =========================
-
-sent_tokens = set()
+DEX_URL = "https://api.dexscreener.com/latest/dex/pairs/solana"
 
 # =========================
 # TELEGRAM FUNCTION
 # =========================
 
 def send_telegram(message):
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-        payload = {
-            "chat_id": CHAT_ID,
-            "text": message,
-            "parse_mode": "HTML"
-        }
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-        response = requests.post(url, json=payload, timeout=10)
+    data = {
+        "chat_id": CHAT_ID,
+        "text": message
+    }
 
-        print("TELEGRAM RESULT:", response.text)
+    response = requests.post(url, data=data)
 
-    except Exception as e:
-        print("Telegram Error:", e)
+    print("TELEGRAM STATUS:", response.status_code, flush=True)
+    print("TELEGRAM RESPONSE:", response.text, flush=True)
 
 # =========================
-# SCANNER
+# TOKEN SCANNER
 # =========================
 
 def scan_tokens():
 
+    print("[SCAN STARTED]", flush=True)
+
     try:
-        response = requests.get(DEX_API, timeout=20)
+
+        response = requests.get(DEX_URL)
+
         data = response.json()
 
         pairs = data.get("pairs", [])
 
-        print(f"PAIRS FOUND: {len(pairs)}")
+        print(f"TOTAL PAIRS FOUND: {len(pairs)}", flush=True)
 
-        for pair in pairs:
+        for pair in pairs[:5]:
 
-            liquidity = pair.get("liquidity", {}).get("usd", 0)
+            try:
 
-            # TESTING MODE
-            if liquidity < 1000:
-                continue
+                name = pair.get("baseToken", {}).get("name", "Unknown")
+                symbol = pair.get("baseToken", {}).get("symbol", "???")
 
-            base = pair.get("baseToken", {})
+                liquidity = pair.get("liquidity", {}).get("usd", 0)
 
-            token_name = base.get("name", "Unknown")
-            symbol = base.get("symbol", "???")
-            token_address = base.get("address")
+                volume = pair.get("volume", {}).get("h24", 0)
 
-            # DUPLICATE SUPPRESSION
-            if token_address in sent_tokens:
-                continue
+                price_change = pair.get("priceChange", {}).get("h24", 0)
 
-            sent_tokens.add(token_address)
+                link = pair.get("url", "")
 
-            volume = pair.get("volume", {}).get("h24", 0)
-            pair_url = pair.get("url", "")
+                message = f"""
+🚀 Rocket Hunter Alert
 
-            message = f"""
-🚀 <b>Rocket Hunter Alert</b>
+🪙 Token: {name} ({symbol})
 
-🪙 Token: {token_name} ({symbol})
-💧 Liquidity: ${liquidity:,.0f}
-📊 Volume 24H: ${volume:,.0f}
-⛓ Chain: Solana
+💧 Liquidity: ${liquidity}
+📈 24H Volume: ${volume}
+🔥 24H Change: {price_change}%
 
-🔗 {pair_url}
+🔗 {link}
 """
 
-            print(f"[ALERT] {token_name}")
+                print(f"ALERT SENT: {symbol}", flush=True)
 
-            send_telegram(message)
+                send_telegram(message)
 
-            time.sleep(2)
+                time.sleep(3)
+
+            except Exception as e:
+
+                print("PAIR ERROR:", e, flush=True)
 
     except Exception as e:
-        print("Scanner Error:", e)
+
+        print("SCAN ERROR:", e, flush=True)
 
 # =========================
 # LOOP
@@ -111,18 +105,21 @@ def scan_loop():
 
     while True:
 
-        print("[SCAN RUNNING]")
+        print("[SCAN RUNNING]", flush=True)
 
         scan_tokens()
+
+        print("[WAITING 60 SECONDS]", flush=True)
 
         time.sleep(60)
 
 # =========================
-# FLASK
+# FLASK SERVER
 # =========================
 
 @app.route("/")
 def home():
+
     return "Rocket Hunter Live 🚀"
 
 # =========================
@@ -131,19 +128,25 @@ def home():
 
 if __name__ == "__main__":
 
-    print("🚀 ROCKET HUNTER STARTING...")
+    print("🚀 ROCKET HUNTER STARTING...", flush=True)
 
     try:
-        send_telegram("🚀 Rocket Hunter Test Alert")
-        print("✅ TEST ALERT SENT")
+
+        send_telegram("🚀 Rocket Hunter Test Alert Working!")
+
+        print("✅ TEST ALERT SENT", flush=True)
+
     except Exception as e:
-        print("❌ TELEGRAM ERROR:", e)
+
+        print("❌ TELEGRAM ERROR:", e, flush=True)
 
     scanner_worker = threading.Thread(target=scan_loop)
+
     scanner_worker.daemon = True
+
     scanner_worker.start()
 
-    print("✅ SCAN THREAD STARTED")
+    print("✅ SCAN THREAD STARTED", flush=True)
 
     port = int(os.environ.get("PORT", 10000))
 
