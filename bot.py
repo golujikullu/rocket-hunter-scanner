@@ -1,48 +1,70 @@
-from flask import Flask
 import requests
-import os
 import time
 import threading
+from flask import Flask
+import os
 
 app = Flask(__name__)
+
+# =========================
+# TELEGRAM CONFIG
+# =========================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# Prevent duplicate spam
-sent_tokens = set()
+# =========================
+# DEXSCREENER API
+# =========================
 
 DEX_API = "https://api.dexscreener.com/latest/dex/pairs/solana"
 
+# =========================
+# DUPLICATE STORAGE
+# =========================
+
+sent_tokens = set()
+
+# =========================
+# TELEGRAM FUNCTION
+# =========================
+
 def send_telegram(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False
-    }
+        payload = {
+            "chat_id": CHAT_ID,
+            "text": message,
+            "parse_mode": "HTML"
+        }
 
-    response = requests.post(url, data=payload)
+        response = requests.post(url, json=payload, timeout=10)
 
-    print("TELEGRAM RESPONSE:", response.text)
+        print("TELEGRAM RESULT:", response.text)
 
-@app.route("/")
-def home():
-    return "Rocket Hunter Running 🚀"
+    except Exception as e:
+        print("Telegram Error:", e)
+
+# =========================
+# SCANNER
+# =========================
 
 def scan_tokens():
+
     try:
-        response = requests.get(DEX_API)
+        response = requests.get(DEX_API, timeout=20)
         data = response.json()
 
         pairs = data.get("pairs", [])
+
+        print(f"PAIRS FOUND: {len(pairs)}")
 
         for pair in pairs:
 
             liquidity = pair.get("liquidity", {}).get("usd", 0)
 
+            # TESTING MODE
             if liquidity < 1000:
                 continue
 
@@ -52,7 +74,7 @@ def scan_tokens():
             symbol = base.get("symbol", "???")
             token_address = base.get("address")
 
-            # Duplicate suppression
+            # DUPLICATE SUPPRESSION
             if token_address in sent_tokens:
                 continue
 
@@ -64,10 +86,10 @@ def scan_tokens():
             message = f"""
 🚀 <b>Rocket Hunter Alert</b>
 
-💎 Token: {token_name} ({symbol})
+🪙 Token: {token_name} ({symbol})
 💧 Liquidity: ${liquidity:,.0f}
-📈 Volume 24H: ${volume}
-✅ Chain: Solana
+📊 Volume 24H: ${volume:,.0f}
+⛓ Chain: Solana
 
 🔗 {pair_url}
 """
@@ -81,20 +103,51 @@ def scan_tokens():
     except Exception as e:
         print("Scanner Error:", e)
 
+# =========================
+# LOOP
+# =========================
+
 def scan_loop():
+
     while True:
+
         print("[SCAN RUNNING]")
 
         scan_tokens()
 
         time.sleep(60)
+
+# =========================
+# FLASK
+# =========================
+
+@app.route("/")
+def home():
+    return "Rocket Hunter Live 🚀"
+
+# =========================
+# MAIN
+# =========================
+
 if __name__ == "__main__":
 
-    print(send_telegram("🚀 Rocket Hunter Test Alert Live!"))
+    print("ROCKET HUNTER STARTING...")
 
+    # TEST TELEGRAM
+    send_telegram("🚀 Rocket Hunter Test Alert")
+
+    print("TEST ALERT SENT")
+
+    # START SCANNER THREAD
     scanner_worker = threading.Thread(target=scan_loop)
+
     scanner_worker.daemon = True
+
     scanner_worker.start()
 
-    app.run(host="0.0.0.0", port=10000)
-    
+    print("[SCAN THREAD STARTED]")
+
+    # RENDER PORT
+    port = int(os.environ.get("PORT", 10000))
+
+    app.run(host="0.0.0.0", port=port)
