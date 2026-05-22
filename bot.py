@@ -17,7 +17,13 @@ CHAT_ID = os.getenv("CHAT_ID")
 # DEXSCREENER API
 # =========================
 
-DEX_URL = "https://api.dexscreener.com/latest/dex/search?q=SOL"
+DEX_URL = "https://api.dexscreener.com/latest/dex/search?q=solana"
+
+# =========================
+# DUPLICATE FILTER
+# =========================
+
+seen_tokens = set()
 
 # =========================
 # TELEGRAM FUNCTION
@@ -31,16 +37,20 @@ def send_telegram(message):
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    data = {
+    payload = {
         "chat_id": CHAT_ID,
-        "text": message
+        "text": message,
+        "parse_mode": "HTML"
     }
 
     try:
-        response = requests.post(url, data=data)
+
+        response = requests.post(url, data=payload)
+
         print("📩 TELEGRAM RESPONSE:", response.text, flush=True)
 
     except Exception as e:
+
         print("❌ TELEGRAM ERROR:", e, flush=True)
 
 # =========================
@@ -53,42 +63,97 @@ def scan_tokens():
 
     try:
 
-        response = requests.get(DEX_URL)
+        response = requests.get(DEX_URL, timeout=10)
 
-        print("✅ API STATUS:", response.status_code, flush=True)
+        print(f"✅ API STATUS: {response.status_code}", flush=True)
 
-        if response.status_code == 200:
+        if response.status_code != 200:
+            return
 
-            data = response.json()
+        data = response.json()
 
-            pairs = data.get("pairs", [])
+        pairs = data.get("pairs", [])
 
-            if len(pairs) > 0:
+        # ONLY SOLANA PAIRS
+        solana_pairs = [
+            p for p in pairs
+            if p.get("chainId") == "solana"
+        ]
 
-                token = pairs[0]
+        print(f"📊 Solana pairs found: {len(solana_pairs)}", flush=True)
 
-                name = token.get("baseToken", {}).get("name", "Unknown")
-                symbol = token.get("baseToken", {}).get("symbol", "???")
-                price = token.get("priceUsd", "0")
+        alert_count = 0
+
+        for pair in solana_pairs[:20]:
+
+            try:
+
+                token_name = pair["baseToken"]["name"]
+                token_symbol = pair["baseToken"]["symbol"]
+
+                # SKIP NATIVE SOL
+                if token_symbol.upper() == "SOL":
+                    continue
+
+                token_id = pair["pairAddress"]
+
+                # DUPLICATE FILTER
+                if token_id in seen_tokens:
+                    continue
+
+                seen_tokens.add(token_id)
+
+                price = pair.get("priceUsd", "N/A")
+
+                liquidity = pair.get("liquidity", {}).get("usd", 0)
+
+                volume = pair.get("volume", {}).get("h24", 0)
+
+                price_change = pair.get("priceChange", {}).get("h24", 0)
+
+                # MINIMUM LIQUIDITY
+                if liquidity < 5000:
+                    print(f"⏭️ Skipped low liquidity: {token_name}", flush=True)
+                    continue
+
+                liq_str = f"${int(liquidity):,}"
+                vol_str = f"${int(volume):,}"
+
+                change_icon = "📈" if float(price_change or 0) > 0 else "📉"
 
                 message = f"""
-🚀 Rocket Hunter Alert
+🚀 <b>Rocket Hunter Alert</b>
 
-🪙 Token: {name} ({symbol})
+💎 <b>{token_name} ({token_symbol})</b>
+
 💰 Price: ${price}
+💧 Liquidity: {liq_str}
+📊 Volume 24H: {vol_str}
+{change_icon} 24H Change: {price_change}%
 
-🔥 Solana token detected
+🔗 Chain: Solana
 """
+
+                print(f"🚨 Alert: {token_name} ({token_symbol})", flush=True)
 
                 send_telegram(message)
 
-            else:
-                print("❌ NO TOKENS FOUND", flush=True)
+                alert_count += 1
 
-        else:
-            print("❌ API FAILED", flush=True)
+                time.sleep(2)
+
+                # MAX 5 ALERTS
+                if alert_count >= 5:
+                    break
+
+            except Exception as e:
+
+                print("PAIR ERROR:", e, flush=True)
+
+        print(f"✅ Scan complete. Alerts sent: {alert_count}", flush=True)
 
     except Exception as e:
+
         print("❌ SCAN ERROR:", e, flush=True)
 
 # =========================
@@ -101,9 +166,9 @@ def scan_loop():
 
         scan_tokens()
 
-        print("[WAITING 60 SECONDS]", flush=True)
+        print("[WAITING 120 SECONDS]", flush=True)
 
-        time.sleep(60)
+        time.sleep(120)
 
 # =========================
 # FLASK
@@ -111,6 +176,7 @@ def scan_loop():
 
 @app.route("/")
 def home():
+
     return "Rocket Hunter Live 🚀"
 
 # =========================
@@ -132,4 +198,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
 
     app.run(host="0.0.0.0", port=port)
-# updated
