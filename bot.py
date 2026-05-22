@@ -90,7 +90,7 @@ def scan_loop():
         time.sleep(60)
 if __name__ == "__main__":
 
-    send_telegram("🚀 Rocket Hunter Test Alert Live!")
+    print(send_telegram("🚀 Rocket Hunter Test Alert Live!"))
 
     scanner_worker = threading.Thread(target=scan_loop)
     scanner_worker.daemon = True
