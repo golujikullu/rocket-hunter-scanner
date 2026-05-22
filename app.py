@@ -5,39 +5,31 @@ import threading
 import requests
 from flask import Flask, jsonify
 
-# =========================
-# FLASK APP
-# =========================
 app = Flask(__name__)
 
 # =========================
 # ENV VARIABLES
 # =========================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-COOLDOWN_SECONDS = int(
-    os.getenv("COOLDOWN_SECONDS", "7200")
-)
+COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", "7200"))
+SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "120"))
+MAX_ALERTS_PER_SCAN = int(os.getenv("MAX_ALERTS_PER_SCAN", "5"))
 
-SCAN_INTERVAL = int(
-    os.getenv("SCAN_INTERVAL", "120")
-)
-
-MAX_ALERTS_PER_SCAN = int(
-    os.getenv("MAX_ALERTS_PER_SCAN", "5")
-)
-
-SEEN_FILE = "/tmp/seen_tokens.json"
+SEEN_FILE = os.getenv("SEEN_FILE", "/tmp/seen_tokens.json")
 
 # =========================
-# MEMORY
+# STORAGE
 # =========================
+
 seen_tokens = {}
 
 # =========================
-# BAD WORD FILTER
+# FILTERS
 # =========================
+
 BAD_WORDS = {
     "creator",
     "official",
@@ -50,9 +42,6 @@ BAD_WORDS = {
     "join",
 }
 
-# =========================
-# BASE TOKENS
-# =========================
 BASE_TICKERS = {
     "SOL",
     "WSOL",
@@ -61,101 +50,85 @@ BASE_TICKERS = {
 }
 
 # =========================
-# REQUEST SESSION
+# SESSION
 # =========================
-session = requests.Session()
 
+session = requests.Session()
 session.headers.update({
-    "User-Agent": "RocketHunter/3.0"
+    "User-Agent": "RocketHunter/4.0"
 })
 
 # =========================
 # LOAD TOKENS
 # =========================
-def load_seen():
 
+def load_seen():
     global seen_tokens
 
     try:
-
         if os.path.exists(SEEN_FILE):
 
-            with open(SEEN_FILE, "r") as f:
-
+            with open(SEEN_FILE, "r", encoding="utf-8") as f:
                 seen_tokens = json.load(f)
 
-            print(
-                f"✅ LOADED {len(seen_tokens)} TOKENS",
-                flush=True
-            )
+            print(f"✅ LOADED {len(seen_tokens)} TOKENS", flush=True)
+
+        else:
+            seen_tokens = {}
 
     except Exception as e:
-
-        print(
-            "❌ LOAD ERROR:",
-            e,
-            flush=True
-        )
+        print("❌ LOAD ERROR:", e, flush=True)
+        seen_tokens = {}
 
 # =========================
 # SAVE TOKENS
 # =========================
+
 def save_seen():
 
     try:
+        parent = os.path.dirname(SEEN_FILE)
 
-        with open(SEEN_FILE, "w") as f:
+        if parent:
+            os.makedirs(parent, exist_ok=True)
 
+        with open(SEEN_FILE, "w", encoding="utf-8") as f:
             json.dump(seen_tokens, f)
 
     except Exception as e:
-
-        print(
-            "❌ SAVE ERROR:",
-            e,
-            flush=True
-        )
+        print("❌ SAVE ERROR:", e, flush=True)
 
 # =========================
 # CLEAN OLD TOKENS
 # =========================
+
 def prune_seen(now_ts):
 
-    old_tokens = []
+    remove_list = []
 
     for token_id, ts in list(seen_tokens.items()):
 
         try:
+            if now_ts - float(ts) > (COOLDOWN_SECONDS * 2):
+                remove_list.append(token_id)
 
-            if now_ts - float(ts) > (
-                COOLDOWN_SECONDS * 2
-            ):
-                old_tokens.append(token_id)
+        except Exception:
+            remove_list.append(token_id)
 
-        except:
-            old_tokens.append(token_id)
-
-    for token_id in old_tokens:
+    for token_id in remove_list:
         seen_tokens.pop(token_id, None)
 
 # =========================
-# TELEGRAM SEND
+# TELEGRAM
 # =========================
+
 def send_telegram(message):
 
     if not BOT_TOKEN or not CHAT_ID:
-
-        print(
-            "❌ BOT TOKEN OR CHAT ID MISSING",
-            flush=True
-        )
-
+        print("❌ BOT TOKEN OR CHAT ID MISSING", flush=True)
         return False
 
-    url = (
-        f"https://api.telegram.org/"
-        f"bot{BOT_TOKEN}/sendMessage"
-    )
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     payload = {
         "chat_id": CHAT_ID,
@@ -172,55 +145,31 @@ def send_telegram(message):
             timeout=20
         )
 
-        print(
-            f"📨 TELEGRAM STATUS: "
-            f"{response.status_code}",
-            flush=True
-        )
+        print(f"📨 TELEGRAM STATUS: {response.status_code}", flush=True)
 
         if response.status_code != 200:
-
-            print(
-                response.text,
-                flush=True
-            )
-
+            print(response.text[:1000], flush=True)
             return False
 
         return True
 
     except Exception as e:
-
-        print(
-            "❌ TELEGRAM ERROR:",
-            e,
-            flush=True
-        )
-
+        print("❌ TELEGRAM ERROR:", e, flush=True)
         return False
 
 # =========================
-# FETCH TOKENS
+# DEXSCREENER API
 # =========================
+
 def get_tokens():
 
-    url = (
-        "https://api.dexscreener.com/"
-        "token-profiles/latest/v1"
-    )
+    url = "https://api.dexscreener.com/token-profiles/latest/v1"
 
     try:
 
-        response = session.get(
-            url,
-            timeout=20
-        )
+        response = session.get(url, timeout=20)
 
-        print(
-            f"✅ API STATUS: "
-            f"{response.status_code}",
-            flush=True
-        )
+        print(f"✅ API STATUS: {response.status_code}", flush=True)
 
         if response.status_code != 200:
             return []
@@ -236,31 +185,19 @@ def get_tokens():
         return []
 
     except Exception as e:
-
-        print(
-            "❌ API ERROR:",
-            e,
-            flush=True
-        )
-
+        print("❌ API ERROR:", e, flush=True)
         return []
 
 # =========================
 # FILTER CHECK
 # =========================
-def should_skip(
-    token_name,
-    token_symbol,
-    description_text
-):
+
+def should_skip(token_name, token_symbol, description_text):
 
     if token_symbol.upper() in BASE_TICKERS:
         return True
 
-    lower_text = (
-        f"{token_name} "
-        f"{description_text}"
-    ).lower()
+    lower_text = f"{token_name} {description_text}".lower()
 
     for word in BAD_WORDS:
 
@@ -272,54 +209,40 @@ def should_skip(
 # =========================
 # MESSAGE FORMAT
 # =========================
-def build_message(
-    token_name,
-    token_symbol,
-    token_id,
-    pair_url
-):
 
-    short_name = (
-        token_name[:20]
-        if len(token_name) > 20
-        else token_name
-    )
+def build_message(token_name, token_symbol, token_id, pair_url):
+
+    short_name = token_name
+
+    if len(short_name) > 22:
+        short_name = short_name[:20] + "..."
 
     return f"""
 🚀 <b>Rocket Hunter Alert</b>
 
-🪙 <b>Token:</b>
-{short_name} ({token_symbol})
+🪙 <b>Token:</b> {short_name} ({token_symbol})
 
 ⛓ <b>Chain:</b> Solana
 
 📌 <b>Mint:</b>
-<code>{token_id[:6]}...{token_id[-4:]}</code>
+<code>{token_id}</code>
 
-🔗 <a href="{pair_url}">
-Trade on DexScreener
-</a>
+🔗 <a href="{pair_url}">DexScreener Link</a>
 """
 
 # =========================
 # MAIN SCANNER
 # =========================
+
 def scan_tokens():
 
-    print(
-        "🔎 SCANNING TOKENS...",
-        flush=True
-    )
+    print("🔎 SCANNING TOKENS...", flush=True)
 
     try:
 
         tokens = get_tokens()
 
-        print(
-            f"📊 TOKENS FOUND: "
-            f"{len(tokens)}",
-            flush=True
-        )
+        print(f"📊 TOKENS FOUND: {len(tokens)}", flush=True)
 
         now_ts = time.time()
 
@@ -327,13 +250,10 @@ def scan_tokens():
 
         alert_count = 0
 
-        for token in tokens[:50]:
+        for token in tokens[:100]:
 
             try:
 
-                # =========================
-                # SOLANA ONLY
-                # =========================
                 chain = str(
                     token.get("chainId") or ""
                 ).lower()
@@ -341,46 +261,20 @@ def scan_tokens():
                 if chain != "solana":
                     continue
 
-                # =========================
-                # TOKEN DATA
-                # =========================
-                base_token = token.get(
-                    "baseToken",
-                    {}
-                )
-
-                token_name = (
+                token_name = str(
                     token.get("name")
                     or token.get("tokenName")
-                    or base_token.get("name")
-                    or base_token.get("symbol")
                     or "Unknown"
-                )
-
-                token_symbol = (
-                    token.get("symbol")
-                    or token.get("tokenSymbol")
-                    or base_token.get("symbol")
-                    or "???"
-                )
-
-                token_name = str(
-                    token_name
                 ).strip()
 
                 token_symbol = str(
-                    token_symbol
+                    token.get("symbol")
+                    or token.get("tokenSymbol")
+                    or "???"
                 ).strip()
-
-                if token_name.lower() == "unknown":
-                    token_name = token_symbol
-
-                if token_symbol == "???":
-                    token_symbol = "SOL"
 
                 token_id = str(
                     token.get("tokenAddress")
-                    or base_token.get("address")
                     or ""
                 ).strip()
 
@@ -395,53 +289,57 @@ def scan_tokens():
                 ).strip()
 
                 # =========================
-                # BASIC CHECKS
+                # EMPTY TOKEN FILTER
                 # =========================
+
                 if not token_id:
+                    print("⏭ SKIP EMPTY TOKEN ID", flush=True)
                     continue
 
+                if token_symbol == "???":
+                    print("⏭ SKIP EMPTY SYMBOL", flush=True)
+                    continue
+
+                if token_name.lower() == "unknown":
+                    print("⏭ SKIP UNKNOWN TOKEN", flush=True)
+                    continue
+
+                # =========================
+                # FALLBACKS
+                # =========================
+
                 if not pair_url:
-
-                    pair_url = (
-                        "https://dexscreener.com/"
-                        f"solana/{token_id}"
-                    )
+                    pair_url = f"https://dexscreener.com/solana/{token_id}"
 
                 # =========================
-                # FILTERS
+                # BAD TOKEN FILTER
                 # =========================
+
                 if should_skip(
                     token_name,
                     token_symbol,
                     description_text
                 ):
 
-                    print(
-                        f"⏭ SKIP: {token_name}",
-                        flush=True
-                    )
-
+                    print(f"⏭ SKIP BAD TOKEN: {token_name}", flush=True)
                     continue
 
                 # =========================
                 # COOLDOWN CHECK
                 # =========================
+
                 last_seen = float(
-                    seen_tokens.get(
-                        token_id,
-                        0
-                    )
+                    seen_tokens.get(token_id, 0)
                 )
 
-                if (
-                    now_ts - last_seen
-                    < COOLDOWN_SECONDS
-                ):
+                if now_ts - last_seen < COOLDOWN_SECONDS:
+                    print(f"⏭ COOLDOWN: {token_name}", flush=True)
                     continue
 
                 # =========================
-                # BUILD MESSAGE
+                # SEND ALERT
                 # =========================
+
                 message = build_message(
                     token_name,
                     token_symbol,
@@ -449,9 +347,6 @@ def scan_tokens():
                     pair_url
                 )
 
-                # =========================
-                # SEND ALERT
-                # =========================
                 ok = send_telegram(message)
 
                 if ok:
@@ -463,48 +358,30 @@ def scan_tokens():
                     alert_count += 1
 
                     print(
-                        f"🚨 ALERT SENT: "
-                        f"{token_name} "
-                        f"({token_symbol})",
+                        f"🚨 ALERT SENT: {token_name} ({token_symbol})",
                         flush=True
                     )
 
                     time.sleep(2)
 
-                # =========================
-                # LIMIT ALERTS
-                # =========================
-                if (
-                    alert_count
-                    >= MAX_ALERTS_PER_SCAN
-                ):
+                if alert_count >= MAX_ALERTS_PER_SCAN:
                     break
 
             except Exception as e:
-
-                print(
-                    "❌ TOKEN ERROR:",
-                    e,
-                    flush=True
-                )
+                print("❌ TOKEN ERROR:", e, flush=True)
 
         print(
-            f"✅ SCAN COMPLETE | "
-            f"ALERTS: {alert_count}",
+            f"✅ SCAN COMPLETE | ALERTS: {alert_count}",
             flush=True
         )
 
     except Exception as e:
-
-        print(
-            "❌ SCAN ERROR:",
-            e,
-            flush=True
-        )
+        print("❌ SCAN ERROR:", e, flush=True)
 
 # =========================
 # LOOP
 # =========================
+
 def scan_loop():
 
     time.sleep(5)
@@ -512,32 +389,21 @@ def scan_loop():
     while True:
 
         try:
-
             scan_tokens()
 
         except Exception as e:
+            print("❌ LOOP ERROR:", e, flush=True)
 
-            print(
-                "❌ LOOP ERROR:",
-                e,
-                flush=True
-            )
-
-        print(
-            f"[WAITING "
-            f"{SCAN_INTERVAL} "
-            f"SECONDS]",
-            flush=True
-        )
+        print(f"[WAITING {SCAN_INTERVAL} SECONDS]", flush=True)
 
         time.sleep(SCAN_INTERVAL)
 
 # =========================
-# ROUTES
+# FLASK ROUTES
 # =========================
+
 @app.route("/")
 def home():
-
     return "Rocket Hunter Live 🚀"
 
 @app.route("/healthz")
@@ -549,14 +415,12 @@ def health():
     })
 
 # =========================
-# START APP
+# START
 # =========================
+
 if __name__ == "__main__":
 
-    print(
-        "🚀 ROCKET HUNTER STARTING...",
-        flush=True
-    )
+    print("🚀 ROCKET HUNTER STARTING...", flush=True)
 
     load_seen()
 
@@ -567,23 +431,11 @@ if __name__ == "__main__":
 
     scan_worker.start()
 
-    print(
-        "✅ SCANNER THREAD STARTED",
-        flush=True
-    )
+    print("✅ SCANNER THREAD STARTED", flush=True)
 
-    port = int(
-        os.environ.get(
-            "PORT",
-            10000
-        )
-    )
+    port = int(os.environ.get("PORT", 10000))
 
-    print(
-        f"🌐 RUNNING ON PORT "
-        f"{port}",
-        flush=True
-    )
+    print(f"🌐 RUNNING ON PORT {port}", flush=True)
 
     app.run(
         host="0.0.0.0",
