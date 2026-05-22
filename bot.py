@@ -14,16 +14,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 # =========================
-# DEXSCREENER API
-# =========================
-
-DEX_URL = "https://api.dexscreener.com/latest/dex/search?q=solana"
-
-# =========================
 # DUPLICATE FILTER
+# same token 2 ghante baad hi repeat hoga
 # =========================
 
-seen_tokens = set()
+seen_tokens = {}   # {token_id: timestamp}
+COOLDOWN_SECONDS = 7200   # 2 hours
 
 # =========================
 # TELEGRAM FUNCTION
@@ -40,18 +36,31 @@ def send_telegram(message):
     payload = {
         "chat_id": CHAT_ID,
         "text": message,
-        "parse_mode": "HTML"
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
     }
 
     try:
 
-        response = requests.post(url, data=payload)
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=10
+        )
 
-        print("📩 TELEGRAM RESPONSE:", response.text, flush=True)
+        print(
+            "📩 TELEGRAM RESPONSE:",
+            response.text,
+            flush=True
+        )
 
     except Exception as e:
 
-        print("❌ TELEGRAM ERROR:", e, flush=True)
+        print(
+            "❌ TELEGRAM ERROR:",
+            e,
+            flush=True
+        )
 
 # =========================
 # TOKEN SCANNER
@@ -63,9 +72,18 @@ def scan_tokens():
 
     try:
 
-        response = requests.get(DEX_URL, timeout=10)
+        # CORRECT API URL
+        url = "https://api.dexscreener.com/latest/dex/search?q=solana"
 
-        print(f"✅ API STATUS: {response.status_code}", flush=True)
+        response = requests.get(
+            url,
+            timeout=10
+        )
+
+        print(
+            f"✅ API STATUS: {response.status_code}",
+            flush=True
+        )
 
         if response.status_code != 200:
             return
@@ -80,46 +98,127 @@ def scan_tokens():
             if p.get("chainId") == "solana"
         ]
 
-        print(f"📊 Solana pairs found: {len(solana_pairs)}", flush=True)
+        print(
+            f"📊 Solana pairs found: {len(solana_pairs)}",
+            flush=True
+        )
+
+        now = time.time()
 
         alert_count = 0
 
-        for pair in solana_pairs[:20]:
+        for pair in solana_pairs:
 
             try:
 
-                token_name = pair["baseToken"]["name"]
-                token_symbol = pair["baseToken"]["symbol"]
+                base = pair.get("baseToken", {})
 
-                # SKIP NATIVE SOL
-                if token_symbol.upper() == "SOL":
+                token_name = base.get(
+                    "name",
+                    "Unknown"
+                )
+
+                token_symbol = base.get(
+                    "symbol",
+                    "???"
+                )
+
+                # TRACK TOKEN MINT ADDRESS
+                token_id = base.get("address")
+
+                if not token_id:
                     continue
 
-                token_id = pair["pairAddress"]
-
-                # DUPLICATE FILTER
-                if token_id in seen_tokens:
+                # SKIP BASE TOKENS
+                if token_symbol.upper() in [
+                    "SOL",
+                    "WSOL",
+                    "USDC",
+                    "USDT"
+                ]:
                     continue
 
-                seen_tokens.add(token_id)
+                # =========================
+                # DATA
+                # =========================
 
-                price = pair.get("priceUsd", "N/A")
+                liquidity = float(
+                    pair.get(
+                        "liquidity",
+                        {}
+                    ).get("usd") or 0
+                )
 
-                liquidity = pair.get("liquidity", {}).get("usd", 0)
+                volume = float(
+                    pair.get(
+                        "volume",
+                        {}
+                    ).get("h24") or 0
+                )
 
-                volume = pair.get("volume", {}).get("h24", 0)
+                # =========================
+                # FILTERS
+                # =========================
 
-                price_change = pair.get("priceChange", {}).get("h24", 0)
-
-                # MINIMUM LIQUIDITY
-                if liquidity < 5000:
-                    print(f"⏭️ Skipped low liquidity: {token_name}", flush=True)
+                if liquidity < 3000:
                     continue
+
+                if volume < 1000:
+                    continue
+
+                # =========================
+                # DUPLICATE COOLDOWN
+                # =========================
+
+                last_seen = seen_tokens.get(
+                    token_id,
+                    0
+                )
+
+                if now - last_seen < COOLDOWN_SECONDS:
+                    continue
+
+                # UPDATE TIMESTAMP
+                seen_tokens[token_id] = now
+
+                # =========================
+                # EXTRA DATA
+                # =========================
+
+                price = pair.get(
+                    "priceUsd",
+                    "N/A"
+                )
+
+                price_change = float(
+                    pair.get(
+                        "priceChange",
+                        {}
+                    ).get("h24") or 0
+                )
+
+                pair_url = pair.get(
+                    "url",
+                    "https://dexscreener.com"
+                )
+
+                # =========================
+                # FORMAT
+                # =========================
 
                 liq_str = f"${int(liquidity):,}"
+
                 vol_str = f"${int(volume):,}"
 
-                change_icon = "📈" if float(price_change or 0) > 0 else "📉"
+                change_icon = (
+                    "📈"
+                    if price_change > 0
+                    else "📉"
+                )
+
+                # =========================
+                # MESSAGE
+                # =========================
 
                 message = f"""
 🚀 <b>Rocket Hunter Alert</b>
@@ -127,14 +226,22 @@ def scan_tokens():
 💎 <b>{token_name} ({token_symbol})</b>
 
 💰 Price: ${price}
+
 💧 Liquidity: {liq_str}
+
 📊 Volume 24H: {vol_str}
+
 {change_icon} 24H Change: {price_change}%
 
-🔗 Chain: Solana
+⛓ Chain: Solana
+
+🔗 <a href="{pair_url}">DexScreener</a>
 """
 
-                print(f"🚨 Alert: {token_name} ({token_symbol})", flush=True)
+                print(
+                    f"🚨 Alert: {token_name} ({token_symbol})",
+                    flush=True
+                )
 
                 send_telegram(message)
 
@@ -148,13 +255,24 @@ def scan_tokens():
 
             except Exception as e:
 
-                print("PAIR ERROR:", e, flush=True)
+                print(
+                    "PAIR ERROR:",
+                    e,
+                    flush=True
+                )
 
-        print(f"✅ Scan complete. Alerts sent: {alert_count}", flush=True)
+        print(
+            f"✅ Scan complete. Alerts sent: {alert_count}",
+            flush=True
+        )
 
     except Exception as e:
 
-        print("❌ SCAN ERROR:", e, flush=True)
+        print(
+            "❌ SCAN ERROR:",
+            e,
+            flush=True
+        )
 
 # =========================
 # LOOP
@@ -166,7 +284,10 @@ def scan_loop():
 
         scan_tokens()
 
-        print("[WAITING 120 SECONDS]", flush=True)
+        print(
+            "[WAITING 120 SECONDS]",
+            flush=True
+        )
 
         time.sleep(120)
 
@@ -185,16 +306,29 @@ def home():
 
 if __name__ == "__main__":
 
-    print("🚀 ROCKET HUNTER STARTING...", flush=True)
+    print(
+        "🚀 ROCKET HUNTER STARTING...",
+        flush=True
+    )
 
-    scanner_worker = threading.Thread(target=scan_loop)
+    scanner_worker = threading.Thread(
+        target=scan_loop
+    )
 
     scanner_worker.daemon = True
 
     scanner_worker.start()
 
-    print("✅ SCAN THREAD STARTED", flush=True)
+    print(
+        "✅ SCAN THREAD STARTED",
+        flush=True
+    )
 
-    port = int(os.environ.get("PORT", 10000))
+    port = int(
+        os.environ.get("PORT", 10000)
+    )
 
-    app.run(host="0.0.0.0", port=port)
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
