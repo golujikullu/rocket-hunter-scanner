@@ -2,6 +2,7 @@ from flask import Flask
 import requests
 import os
 import time
+import threading
 
 app = Flask(__name__)
 
@@ -11,17 +12,7 @@ CHAT_ID = os.getenv("CHAT_ID")
 # Prevent duplicate spam
 sent_tokens = set()
 
-# Minimum liquidity filter
-MIN_LIQUIDITY = 10000
-
-@app.route("/")
-def home():
-    return "Rocket Hunter Running 🚀"
-
-@app.route("/health")
-def health():
-    return "OK", 200
-
+DEX_API = "https://api.dexscreener.com/latest/dex/search/?q=solana"
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -30,7 +21,7 @@ def send_telegram(message):
         "chat_id": CHAT_ID,
         "text": message,
         "parse_mode": "HTML",
-        "disable_web_page_preview": True
+        "disable_web_page_preview": False
     }
 
     try:
@@ -38,13 +29,17 @@ def send_telegram(message):
     except Exception as e:
         print("Telegram Error:", e)
 
+@app.route("/")
+def home():
+    return "Rocket Hunter Running 🚀"
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    return "OK", 200
 
 def scan_tokens():
-
-    url = "https://api.dexscreener.com/latest/dex/search/?q=solana"
-
     try:
-        response = requests.get(url, timeout=15)
+        response = requests.get(DEX_API, timeout=15)
         data = response.json()
 
         pairs = data.get("pairs", [])
@@ -57,20 +52,15 @@ def scan_tokens():
 
             liquidity = pair.get("liquidity", {}).get("usd", 0)
 
-            if not liquidity:
+            # Minimum liquidity filter
+            if liquidity < 10000:
                 continue
 
-            liquidity = float(liquidity)
+            base = pair.get("baseToken", {})
 
-            # Liquidity filter
-            if liquidity < MIN_LIQUIDITY:
-                continue
-
-            base_token = pair.get("baseToken", {})
-
-            token_name = base_token.get("name", "Unknown")
-            symbol = base_token.get("symbol", "???")
-            token_address = base_token.get("address")
+            token_name = base.get("name", "Unknown")
+            symbol = base.get("symbol", "???")
+            token_address = base.get("address")
 
             # Duplicate suppression
             if token_address in sent_tokens:
@@ -99,12 +89,14 @@ def scan_tokens():
     except Exception as e:
         print("Scanner Error:", e)
 
-
-if __name__ == "__main__":
-
+def scan_loop():
     while True:
         print("[SCAN RUNNING]")
 
         scan_tokens()
 
         time.sleep(60)
+
+scanner_worker = threading.Thread(target=scan_loop)
+scanner_worker.daemon = True
+scanner_worker.start()
