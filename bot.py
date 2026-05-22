@@ -24,7 +24,9 @@ def send_telegram(message):
         "disable_web_page_preview": False
     }
 
-    requests.post(url, data=payload)
+    response = requests.post(url, data=payload)
+
+    print(response.text)
 
 @app.route("/")
 def home():
@@ -73,6 +75,8 @@ def scan_tokens():
             print(f"[ALERT] {token_name}")
 
             send_telegram(message)
+
+            time.sleep(2)
 
     except Exception as e:
         print("Scanner Error:", e)
