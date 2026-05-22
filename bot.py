@@ -43,7 +43,7 @@ def scan_tokens():
 
             liquidity = pair.get("liquidity", {}).get("usd", 0)
 
-            if liquidity < 10000:
+            if liquidity < 1000:
                 continue
 
             base = pair.get("baseToken", {})
