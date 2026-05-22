@@ -19,7 +19,7 @@ CHAT_ID = os.getenv("CHAT_ID")
 
 seen_tokens = {}
 
-COOLDOWN_SECONDS = 7200   # 2 hours
+COOLDOWN_SECONDS = 7200
 
 # =========================
 # TELEGRAM FUNCTION
@@ -28,12 +28,7 @@ COOLDOWN_SECONDS = 7200   # 2 hours
 def send_telegram(message):
 
     if not BOT_TOKEN or not CHAT_ID:
-
-        print(
-            "❌ BOT TOKEN OR CHAT ID MISSING",
-            flush=True
-        )
-
+        print("❌ BOT TOKEN OR CHAT ID MISSING", flush=True)
         return
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -54,8 +49,7 @@ def send_telegram(message):
         )
 
         print(
-            "📩 TELEGRAM RESPONSE:",
-            response.text,
+            f"📩 TELEGRAM STATUS: {response.status_code}",
             flush=True
         )
 
@@ -80,7 +74,7 @@ def scan_tokens():
 
     try:
 
-        # DEXSCREENER TOKEN PROFILES API
+        # NEW TOKEN API
         url = "https://api.dexscreener.com/token-profiles/latest/v1"
 
         response = requests.get(
@@ -98,11 +92,10 @@ def scan_tokens():
 
         data = response.json()
 
-        # API RETURNS LIST
-        pairs = data if isinstance(data, list) else []
+        tokens = data if isinstance(data, list) else []
 
         print(
-            f"📊 Tokens found: {len(pairs)}",
+            f"📊 Tokens Found: {len(tokens)}",
             flush=True
         )
 
@@ -110,53 +103,38 @@ def scan_tokens():
 
         alert_count = 0
 
-        for pair in pairs:
+        for token in tokens:
 
             try:
 
-                # =========================
-                # CHAIN FILTER
-                # =========================
-
+                # SOLANA ONLY
                 chain_id = str(
-                    pair.get("chainId", "")
+                    token.get("chainId", "")
                 ).lower()
 
                 if chain_id != "solana":
                     continue
 
-                # =========================
                 # TOKEN DATA
-                # =========================
-
-                token_name = (
-                    pair.get("tokenName")
-                    or pair.get("header")
-                    or "Unknown"
+                token_name = token.get(
+                    "header",
+                    "Unknown"
                 )
 
-                token_symbol = (
-                    pair.get("tokenSymbol")
-                    or "NEW"
+                token_symbol = token.get(
+                    "description",
+                    "NEW"
                 )
 
                 token_id = (
-                    pair.get("tokenAddress")
-                    or pair.get("url")
-                )
-
-                pair_url = pair.get(
-                    "url",
-                    "https://dexscreener.com"
+                    token.get("tokenAddress")
+                    or token.get("url")
                 )
 
                 if not token_id:
                     continue
 
-                # =========================
                 # SKIP MAJOR TOKENS
-                # =========================
-
                 if token_symbol.upper() in [
                     "SOL",
                     "WSOL",
@@ -165,10 +143,7 @@ def scan_tokens():
                 ]:
                     continue
 
-                # =========================
-                # DUPLICATE COOLDOWN
-                # =========================
-
+                # DUPLICATE FILTER
                 last_seen = seen_tokens.get(
                     token_id,
                     0
@@ -177,13 +152,15 @@ def scan_tokens():
                 if now - last_seen < COOLDOWN_SECONDS:
                     continue
 
-                # SAVE TIMESTAMP
+                # SAVE TIME
                 seen_tokens[token_id] = now
 
-                # =========================
-                # MESSAGE
-                # =========================
+                pair_url = token.get(
+                    "url",
+                    "https://dexscreener.com"
+                )
 
+                # MESSAGE
                 message = f"""
 🚀 <b>Rocket Hunter Alert</b>
 
@@ -195,7 +172,7 @@ def scan_tokens():
 """
 
                 print(
-                    f"🚨 Alert: {token_name} ({token_symbol})",
+                    f"🚨 ALERT: {token_name}",
                     flush=True
                 )
 
@@ -205,7 +182,7 @@ def scan_tokens():
 
                 time.sleep(2)
 
-                # LIMIT ALERTS
+                # MAX 5 ALERTS
                 if alert_count >= 5:
                     break
 
@@ -218,7 +195,7 @@ def scan_tokens():
                 )
 
         print(
-            f"✅ Scan complete. Alerts sent: {alert_count}",
+            f"✅ Scan Complete. Alerts Sent: {alert_count}",
             flush=True
         )
 
@@ -248,7 +225,7 @@ def scan_loop():
         time.sleep(120)
 
 # =========================
-# FLASK ROUTE
+# FLASK
 # =========================
 
 @app.route("/")
