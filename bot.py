@@ -80,7 +80,7 @@ def scan_tokens():
 
     try:
 
-        # NEW TOKEN PROFILES API
+        # DEXSCREENER TOKEN PROFILES API
         url = "https://api.dexscreener.com/token-profiles/latest/v1"
 
         response = requests.get(
@@ -114,26 +114,35 @@ def scan_tokens():
 
             try:
 
+                # =========================
+                # CHAIN FILTER
+                # =========================
+
                 chain_id = str(
                     pair.get("chainId", "")
                 ).lower()
 
-                # ONLY SOLANA
                 if chain_id != "solana":
                     continue
 
-                token_name = pair.get(
-                    "tokenName",
-                    "Unknown"
+                # =========================
+                # TOKEN DATA
+                # =========================
+
+                token_name = (
+                    pair.get("tokenName")
+                    or pair.get("header")
+                    or "Unknown"
                 )
 
-                token_symbol = pair.get(
-                    "tokenSymbol",
-                    "???"
+                token_symbol = (
+                    pair.get("tokenSymbol")
+                    or "NEW"
                 )
 
-                token_id = pair.get(
-                    "tokenAddress"
+                token_id = (
+                    pair.get("tokenAddress")
+                    or pair.get("url")
                 )
 
                 pair_url = pair.get(
@@ -144,7 +153,10 @@ def scan_tokens():
                 if not token_id:
                     continue
 
+                # =========================
                 # SKIP MAJOR TOKENS
+                # =========================
+
                 if token_symbol.upper() in [
                     "SOL",
                     "WSOL",
@@ -165,7 +177,7 @@ def scan_tokens():
                 if now - last_seen < COOLDOWN_SECONDS:
                     continue
 
-                # UPDATE TIMESTAMP
+                # SAVE TIMESTAMP
                 seen_tokens[token_id] = now
 
                 # =========================
@@ -193,7 +205,7 @@ def scan_tokens():
 
                 time.sleep(2)
 
-                # MAX ALERTS
+                # LIMIT ALERTS
                 if alert_count >= 5:
                     break
 
@@ -236,7 +248,7 @@ def scan_loop():
         time.sleep(120)
 
 # =========================
-# FLASK HEALTH ROUTE
+# FLASK ROUTE
 # =========================
 
 @app.route("/")
@@ -275,4 +287,4 @@ if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
         port=port
-    )    
+    )
