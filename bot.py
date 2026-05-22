@@ -88,10 +88,13 @@ def scan_loop():
         scan_tokens()
 
         time.sleep(60)
-
 if __name__ == "__main__":
+
+    send_telegram("🚀 Rocket Hunter Test Alert Live!")
+
     scanner_worker = threading.Thread(target=scan_loop)
     scanner_worker.daemon = True
     scanner_worker.start()
 
     app.run(host="0.0.0.0", port=10000)
+    
