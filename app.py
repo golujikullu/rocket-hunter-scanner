@@ -34,7 +34,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # =========================================================
-# API
+# API URL
 # =========================================================
 
 DEX_URL = "https://api.geckoterminal.com/api/v2/networks/solana/new_pools"
@@ -43,9 +43,11 @@ DEX_URL = "https://api.geckoterminal.com/api/v2/networks/solana/new_pools"
 # MEMORY CACHE
 # =========================================================
 
+# mint address based tracking
 SENT_TOKENS = {}
 
-COOLDOWN = 1800  # 30 MINUTES
+# 30 minute cooldown
+COOLDOWN = 1800
 
 # =========================================================
 # ENTRY LABEL ENGINE
@@ -107,7 +109,7 @@ def send_alert(
     )
 
     # =====================================================
-    # MESSAGE
+    # TELEGRAM MESSAGE
     # =====================================================
 
     message = (
@@ -142,7 +144,7 @@ def send_alert(
     }
 
     # =====================================================
-    # TELEGRAM REQUEST
+    # TELEGRAM API
     # =====================================================
 
     url = (
@@ -169,7 +171,7 @@ def send_alert(
         if res.status_code == 200:
 
             logging.info(
-                f"✅ ALERT: {symbol} | {entry_label}"
+                f"✅ ALERT SENT: {symbol} | {entry_label}"
             )
 
             return True
@@ -246,9 +248,7 @@ def scanner():
 
                 SENT_TOKENS.clear()
 
-                logging.info(
-                    "🧹 Cache flushed"
-                )
+                logging.info("🧹 Cache flushed")
 
             # =============================================
             # API REQUEST
@@ -265,11 +265,11 @@ def scanner():
             )
 
             logging.info(
-                f"API STATUS: {res.status_code}"
+                f"🌐 API STATUS: {res.status_code}"
             )
 
             # =============================================
-            # RATE LIMIT
+            # RATE LIMIT HANDLING
             # =============================================
 
             if res.status_code == 429:
@@ -288,6 +288,10 @@ def scanner():
 
             elif res.status_code != 200:
 
+                logging.warning(
+                    "⚠️ Bad API response"
+                )
+
                 time.sleep(30)
 
                 continue
@@ -299,13 +303,13 @@ def scanner():
             pools = res.json().get("data", [])
 
             logging.info(
-                f"📊 Pools: {len(pools)}"
+                f"📊 Pools Received: {len(pools)}"
             )
 
             alerts = 0
 
             # =============================================
-            # LOOP THROUGH POOLS
+            # POOL LOOP
             # =============================================
 
             for pool in pools:
@@ -423,8 +427,7 @@ def scanner():
                         base_token_data.get("id")
                     )
 
-                    # Fallback if mint missing
-
+                    # fallback
                     if mint_address in [
                         None,
                         "",
@@ -498,13 +501,6 @@ def scanner():
                         or 0
                     )
 
-                    logging.info(
-                        f"💎 {symbol} | "
-                        f"Age:{age_hours:.1f}h | "
-                        f"Liq:${liquidity:,.0f} | "
-                        f"Vol:${volume:,.0f}"
-                    )
-
                     # =====================================
                     # FILTERS
                     # =====================================
@@ -514,6 +510,17 @@ def scanner():
 
                     if volume < 3000:
                         continue
+
+                    # =====================================
+                    # CLEAN LOGGING
+                    # =====================================
+
+                    logging.info(
+                        f"💎 {symbol} | "
+                        f"Age:{age_hours:.1f}h | "
+                        f"Liq:${liquidity:,.0f} | "
+                        f"Vol:${volume:,.0f}"
+                    )
 
                     # =====================================
                     # SEND ALERT
@@ -550,7 +557,7 @@ def scanner():
                     )
 
             logging.info(
-                f"✅ Done | Alerts: {alerts}"
+                f"✅ Scan Complete | Alerts: {alerts}"
             )
 
         except Exception as e:
