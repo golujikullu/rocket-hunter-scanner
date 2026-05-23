@@ -20,8 +20,12 @@ logging.basicConfig(
 
 app = Flask(__name__)
 
+@app.route("/")
+def home():
+    return "🚀 Rocket Hunter LIVE"
+
 # =========================
-# ENV VARIABLES
+# TELEGRAM CONFIG
 # =========================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -40,27 +44,20 @@ DEXSCREENER_API_URL = (
 # =========================
 
 SCAN_INTERVAL = 20
-MIN_LIQUIDITY = 5000
-MIN_VOLUME = 10000
+
+# FIRST ALERT FILTERS
+MIN_LIQUIDITY = 500
+MIN_VOLUME = 500
 
 # =========================
 # DUPLICATE FILTER
 # =========================
 
 SENT_PAIRS = {}
-
-COOLDOWN_SECONDS = 7200
-
-# =========================
-# FLASK ROUTE
-# =========================
-
-@app.route("/")
-def home():
-    return "🚀 Rocket Hunter LIVE"
+COOLDOWN_SECONDS = 3600
 
 # =========================
-# TELEGRAM ALERT
+# TELEGRAM FUNCTION
 # =========================
 
 def send_telegram_alert(
@@ -68,30 +65,27 @@ def send_telegram_alert(
     symbol,
     liquidity,
     volume,
-    pair_address,
-    price
+    price,
+    pair_address
 ):
 
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        logging.error("❌ Telegram credentials missing")
+        logging.error("❌ TELEGRAM VARIABLES MISSING")
         return False
 
-    dex_link = (
-        f"https://dexscreener.com/solana/{pair_address}"
-    )
-
     message = f"""
-🚀 <b>Rocket Hunter Alert</b>
+🚀 Rocket Hunter Alert
 
-💎 <b>{token_name} ({symbol})</b>
+💎 Token: {token_name} ({symbol})
 
 💰 Price: ${price}
 
-💧 Liquidity: ${int(liquidity):,}
+💧 Liquidity: ${liquidity:,.2f}
 
-📊 Volume 24H: ${int(volume):,}
+📊 Volume 24H: ${volume:,.2f}
 
-📈 <a href="{dex_link}">DexScreener Link</a>
+🔗 Pair:
+https://dexscreener.com/solana/{pair_address}
 """
 
     url = (
@@ -101,9 +95,7 @@ def send_telegram_alert(
 
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True
+        "text": message
     }
 
     try:
@@ -115,36 +107,32 @@ def send_telegram_alert(
         )
 
         logging.info(
-            f"📩 Telegram Response: {response.text}"
+            f"📩 Telegram Response: {response.status_code}"
         )
 
-        return response.status_code == 200
+        if response.status_code == 200:
+            return True
 
     except Exception as e:
+        logging.error(f"❌ Telegram Error: {e}")
 
-        logging.error(
-            f"❌ Telegram Error: {e}"
-        )
-
-        return False
+    return False
 
 # =========================
-# MAIN SCANNER
+# SCANNER
 # =========================
 
 def scan_pairs():
 
     global SENT_PAIRS
 
-    logging.info(
-        "🔎 Scanning Solana pairs..."
-    )
+    logging.info("🔎 Scanning Solana pairs...")
 
     try:
 
         response = requests.get(
             DEXSCREENER_API_URL,
-            timeout=20
+            timeout=15
         )
 
         logging.info(
@@ -158,62 +146,52 @@ def scan_pairs():
 
         pairs = data.get("pairs", [])
 
-        logging.info(
-            f"📊 Pairs Found: {len(pairs)}"
-        )
+        logging.info(f"📊 Pairs Found: {len(pairs)}")
 
         now = time.time()
 
-        alert_count = 0
+        alerts_sent = 0
 
-        for pair in pairs[:50]:
+        for pair in pairs:
 
             try:
 
-                # =========================
-                # CHAIN CHECK
-                # =========================
+                chain = pair.get("chainId")
 
-                if pair.get("chainId") != "solana":
+                if chain != "solana":
                     continue
 
-                # =========================
-                # SAFE PARSING
-                # =========================
-
-                base = pair.get("baseToken", {})
-
-                token_name = str(
-                    base.get("name", "Unknown")
-                ).strip()
-
-                symbol = str(
-                    base.get("symbol", "???")
-                ).strip()
-
-                pair_address = str(
-                    pair.get("pairAddress", "")
-                ).strip()
-
-                # =========================
-                # EMPTY CHECK
-                # =========================
-
-                if not symbol or symbol == "???":
-                    continue
+                pair_address = pair.get("pairAddress")
 
                 if not pair_address:
                     continue
 
-                if symbol.upper() in [
-                    "SOL",
-                    "WSOL"
-                ]:
+                # DUPLICATE FILTER
+                last_seen = SENT_PAIRS.get(
+                    pair_address,
+                    0
+                )
+
+                if now - last_seen < COOLDOWN_SECONDS:
                     continue
 
-                # =========================
-                # MARKET DATA
-                # =========================
+                base_token = pair.get(
+                    "baseToken",
+                    {}
+                )
+
+                token_name = base_token.get(
+                    "name",
+                    ""
+                ).strip()
+
+                symbol = base_token.get(
+                    "symbol",
+                    ""
+                ).strip()
+
+                if not token_name or not symbol:
+                    continue
 
                 liquidity = float(
                     pair.get(
@@ -237,82 +215,63 @@ def scan_pairs():
 
                 price = pair.get(
                     "priceUsd",
-                    "N/A"
+                    "0"
                 )
 
-                # =========================
-                # FILTERS
-                # =========================
+                # DEBUG
+                logging.info(
+                    f"TOKEN {symbol} | "
+                    f"Liq ${liquidity} | "
+                    f"Vol ${volume}"
+                )
 
+                # FILTERS
                 if liquidity < MIN_LIQUIDITY:
                     continue
 
                 if volume < MIN_VOLUME:
                     continue
 
-                # =========================
-                # DUPLICATE FILTER
-                # =========================
-
-                last_seen = SENT_PAIRS.get(
-                    pair_address,
-                    0
-                )
-
-                if (
-                    now - last_seen
-                    < COOLDOWN_SECONDS
-                ):
-                    continue
-
-                SENT_PAIRS[pair_address] = now
-
-                # =========================
-                # ALERT
-                # =========================
-
                 logging.info(
-                    f"🚨 ALERT: "
-                    f"{token_name} ({symbol})"
+                    f"🚨 ALERT FOUND: {symbol}"
                 )
 
-                ok = send_telegram_alert(
+                success = send_telegram_alert(
                     token_name,
                     symbol,
                     liquidity,
                     volume,
-                    pair_address,
-                    price
+                    price,
+                    pair_address
                 )
 
-                if ok:
-                    alert_count += 1
+                if success:
 
-                time.sleep(2)
+                    SENT_PAIRS[pair_address] = now
 
-                # =========================
-                # LIMIT
-                # =========================
+                    alerts_sent += 1
 
-                if alert_count >= 5:
-                    break
+                    logging.info(
+                        f"🎯 ALERT SENT: {symbol}"
+                    )
+
+                    time.sleep(2)
+
+                    # LIMIT
+                    if alerts_sent >= 3:
+                        break
 
             except Exception as e:
-
                 logging.error(
-                    f"❌ Pair Error: {e}"
+                    f"PAIR ERROR: {e}"
                 )
 
         logging.info(
-            f"✅ Scan Complete | Alerts: "
-            f"{alert_count}"
+            f"✅ Scan Complete | Alerts: {alerts_sent}"
         )
 
     except Exception as e:
-
-        logging.error(
-            f"❌ Scan Error: {e}"
-        )
+        logging.error(f"❌ SCAN ERROR: {e}")
 
 # =========================
 # LOOP
@@ -324,15 +283,12 @@ def scanner_loop():
         "⚡ Scanner Thread Started"
     )
 
-    time.sleep(5)
-
     while True:
 
         scan_pairs()
 
         logging.info(
-            f"⏳ Waiting "
-            f"{SCAN_INTERVAL} seconds..."
+            f"⏳ Waiting {SCAN_INTERVAL} seconds..."
         )
 
         time.sleep(SCAN_INTERVAL)
@@ -347,16 +303,12 @@ if __name__ == "__main__":
         "🚀 Rocket Hunter Starting..."
     )
 
-    scanner_worker = Thread(
+    scanner_thread = Thread(
         target=scanner_loop,
         daemon=True
     )
 
-    scanner_worker.start()
-
-    logging.info(
-        "✅ Scanner Thread Running"
-    )
+    scanner_thread.start()
 
     port = int(
         os.getenv("PORT", 10000)
