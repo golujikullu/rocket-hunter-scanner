@@ -5,18 +5,18 @@ import logging
 from threading import Thread
 from flask import Flask
 
-# ============================================
+# =========================================================
 # LOGGING
-# ============================================
+# =========================================================
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# ============================================
+# =========================================================
 # FLASK
-# ============================================
+# =========================================================
 
 app = Flask(__name__)
 
@@ -24,30 +24,45 @@ app = Flask(__name__)
 def home():
     return "🚀 Rocket Hunter LIVE", 200
 
-# ============================================
+# =========================================================
 # ENV VARIABLES
-# ============================================
+# =========================================================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# ============================================
+# =========================================================
 # API
-# ============================================
+# =========================================================
 
 DEX_URL = "https://api.geckoterminal.com/api/v2/networks/solana/new_pools"
 
-# ============================================
-# CACHE
-# ============================================
+# =========================================================
+# MEMORY / DUPLICATE PROTECTION
+# =========================================================
 
 SENT_PAIRS = {}
 
 COOLDOWN = 7200  # 2 HOURS
 
-# ============================================
+# =========================================================
+# SCAM FILTER
+# =========================================================
+
+BAD_WORDS = [
+    "SPERM",
+    "SEX",
+    "PORN",
+    "XXX",
+    "TEST",
+    "SCAM",
+    "RUG",
+    "BANK"
+]
+
+# =========================================================
 # TELEGRAM ALERT
-# ============================================
+# =========================================================
 
 def send_alert(
     symbol,
@@ -58,57 +73,54 @@ def send_alert(
     price_change
 ):
 
-    # RISK ENGINE
+    # =========================
+    # RISK LEVEL
+    # =========================
 
     if liquidity > 50000 and volume > 20000:
         risk = "🟢 LOW RISK"
 
-    elif liquidity > 10000:
+    elif liquidity > 15000:
         risk = "🟡 MEDIUM RISK"
 
     else:
         risk = "🔴 HIGH RISK"
 
+    # =========================
     # PRICE CHANGE ICON
+    # =========================
 
     change_icon = "📈" if price_change >= 0 else "📉"
 
+    # =========================
     # CLEAN HTML
+    # =========================
 
-    clean_symbol = (
-        symbol.replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+    clean_symbol = symbol.replace("<", "").replace(">", "")
+    clean_name = name.replace("<", "").replace(">", "")
 
-    clean_name = (
-        name.replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
-
+    # =========================
     # MESSAGE
+    # =========================
 
     message = (
         f"🚀 <b>Rocket Hunter Alert</b>\n\n"
 
         f"💎 <b>{clean_symbol}</b>\n"
-        f"📛 {clean_name}\n\n"
+        f"🪙 {clean_name}\n\n"
 
-        f"💧 Liquidity: ${liquidity:,.0f}\n"
-        f"📊 Volume: ${volume:,.0f}\n"
-        f"{change_icon} Change: {price_change:.1f}%\n\n"
+        f"💧 Liquidity: <b>${liquidity:,.0f}</b>\n"
+        f"📊 Volume 24h: <b>${volume:,.0f}</b>\n"
+        f"{change_icon} Change: <b>{price_change:.1f}%</b>\n\n"
 
-        f"{risk}\n\n"
-
-        f"📊 Dex:\n"
-        f"https://dexscreener.com/solana/{pair_address}\n\n"
-
-        f"🦎 Gecko:\n"
-        f"https://www.geckoterminal.com/solana/pools/{pair_address}"
+        f"{risk}"
     )
 
+    # =========================
     # BUTTONS
+    # =========================
 
-    inline_keyboard = {
+    keyboard = {
         "inline_keyboard": [[
             {
                 "text": "📊 DexScreener",
@@ -121,18 +133,17 @@ def send_alert(
         ]]
     }
 
-    # TELEGRAM URL
+    # =========================
+    # TELEGRAM API
+    # =========================
 
-    url = (
-        f"https://api.telegram.org/"
-        f"bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    )
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
         "parse_mode": "HTML",
-        "reply_markup": inline_keyboard,
+        "reply_markup": keyboard,
         "disable_web_page_preview": True
     }
 
@@ -141,55 +152,46 @@ def send_alert(
         res = requests.post(
             url,
             json=payload,
-            timeout=10
+            timeout=15
         )
 
-        logging.info(
-            f"Telegram Status: {res.status_code}"
-        )
+        logging.info(f"Telegram Status: {res.status_code}")
 
         if res.status_code == 200:
-
-            logging.info(
-                f"✅ ALERT SENT: {symbol}"
-            )
-
+            logging.info(f"✅ ALERT SENT: {symbol}")
             return True
 
         else:
-
-            logging.error(
-                f"Telegram Error: {res.text}"
-            )
+            logging.error(res.text)
 
     except Exception as e:
-
-        logging.error(
-            f"Telegram Exception: {e}"
-        )
+        logging.error(f"Telegram Error: {e}")
 
     return False
 
-# ============================================
-# SCANNER
-# ============================================
+# =========================================================
+# MAIN SCANNER
+# =========================================================
 
 def scanner():
 
-    logging.info(
-        "🚀 Rocket Hunter Starting..."
-    )
+    logging.info("🚀 Rocket Hunter Started")
 
+    # =========================
     # ENV CHECK
+    # =========================
 
-    if (
-        not TELEGRAM_BOT_TOKEN
-        or not TELEGRAM_CHAT_ID
-    ):
-        logging.error(
-            "❌ ENV VARIABLES MISSING!"
-        )
+    if not TELEGRAM_BOT_TOKEN:
+        logging.error("❌ TELEGRAM_BOT_TOKEN missing")
         return
+
+    if not TELEGRAM_CHAT_ID:
+        logging.error("❌ TELEGRAM_CHAT_ID missing")
+        return
+
+    # =========================
+    # LOOP
+    # =========================
 
     while True:
 
@@ -197,205 +199,171 @@ def scanner():
 
             now = time.time()
 
-            # ====================================
+            # =====================================
             # CLEAN OLD CACHE
-            # ====================================
+            # =====================================
 
-            expired = [
+            expired = []
 
-                k
+            for pair, ts in SENT_PAIRS.items():
 
-                for k, v in SENT_PAIRS.items()
+                if now - ts > COOLDOWN:
+                    expired.append(pair)
 
-                if now - v > COOLDOWN
-            ]
+            for pair in expired:
+                del SENT_PAIRS[pair]
 
-            for k in expired:
-                del SENT_PAIRS[k]
-
-            # MEMORY SAFETY
-
-            if len(SENT_PAIRS) > 5000:
-                SENT_PAIRS.clear()
-
-            # ====================================
-            # API CALL
-            # ====================================
+            # =====================================
+            # API REQUEST
+            # =====================================
 
             headers = {
                 "User-Agent": "Mozilla/5.0"
             }
 
-            res = requests.get(
+            response = requests.get(
                 DEX_URL,
                 headers=headers,
-                timeout=15
+                timeout=20
             )
 
-            logging.info(
-                f"API STATUS: {res.status_code}"
-            )
+            logging.info(f"API STATUS: {response.status_code}")
 
+            # =====================================
             # RATE LIMIT
+            # =====================================
 
-            if res.status_code == 429:
+            if response.status_code == 429:
 
-                logging.warning(
-                    "⚠️ Rate Limited. Waiting 90s..."
-                )
+                logging.warning("⚠️ RATE LIMITED")
 
                 time.sleep(90)
 
                 continue
 
+            # =====================================
             # BAD RESPONSE
+            # =====================================
 
-            if res.status_code != 200:
+            if response.status_code != 200:
+
+                logging.warning("❌ BAD API RESPONSE")
 
                 time.sleep(30)
 
                 continue
 
+            # =====================================
             # JSON
+            # =====================================
 
-            pools = res.json().get("data", [])
+            data = response.json()
 
-            logging.info(
-                f"📊 Pools Found: {len(pools)}"
-            )
+            pools = data.get("data", [])
+
+            logging.info(f"📊 Pools Found: {len(pools)}")
 
             alerts = 0
 
-            # ====================================
+            # =====================================
             # LOOP POOLS
-            # ====================================
+            # =====================================
 
             for pool in pools:
 
                 try:
 
-                    attr = pool.get(
-                        "attributes",
-                        {}
-                    )
+                    attr = pool.get("attributes", {})
 
-                    pair_address = attr.get(
-                        "address"
-                    )
+                    pair_address = attr.get("address")
 
-                    # SKIP EMPTY
+                    # =================================
+                    # DUPLICATE PROTECTION
+                    # =================================
 
                     if not pair_address:
                         continue
 
-                    # DUPLICATE BLOCK
-
                     if pair_address in SENT_PAIRS:
                         continue
 
-                    # ====================================
-                    # NAME + SYMBOL FIX
-                    # ====================================
+                    # =================================
+                    # NAME
+                    # =================================
 
-                    pool_name = attr.get(
-                        "name",
-                        ""
-                    )
+                    pool_name = attr.get("name", "")
 
-                    parts = (
-                        pool_name
-                        .replace(" / ", "/")
-                        .split("/")
-                    )
+                    if " / " in pool_name:
 
-                    symbol = "UNKNOWN"
+                        symbol = pool_name.split(" / ")[0].strip()
+                        base = pool_name.split(" / ")[1].strip()
 
-                    if len(parts) > 0:
+                    elif "/" in pool_name:
 
-                        symbol = (
-                            parts[0]
-                            .strip()
-                            .upper()
-                        )
+                        symbol = pool_name.split("/")[0].strip()
+                        base = pool_name.split("/")[1].strip()
 
-                    if (
-                        not symbol
-                        or symbol == "UNKNOWN"
-                    ):
+                    else:
 
-                        symbol = attr.get(
-                            "symbol",
-                            "UNKNOWN"
-                        )
+                        symbol = pool_name[:12]
+                        base = "SOL"
+
+                    # =================================
+                    # EMPTY FIX
+                    # =================================
 
                     if not symbol:
                         symbol = "UNKNOWN"
 
-                    if len(symbol) > 15:
-                        symbol = symbol[:15]
-
-                    # BASE COINS SKIP
+                    # =================================
+                    # SKIP BASE TOKENS
+                    # =================================
 
                     if symbol.lower() in [
-
                         "sol",
                         "wsol",
                         "usdc",
                         "usdt"
-
                     ]:
                         continue
 
-                    # NAME
+                    # =================================
+                    # SCAM FILTER
+                    # =================================
 
-                    name = (
-                        pool_name
-                        if pool_name
-                        else "Unknown"
-                    )
+                    if any(
+                        word in symbol.upper()
+                        for word in BAD_WORDS
+                    ):
+                        continue
 
-                    # ====================================
-                    # LIQUIDITY
-                    # ====================================
+                    # =================================
+                    # METRICS
+                    # =================================
 
                     liquidity = float(
-                        attr.get(
-                            "reserve_in_usd"
-                        ) or 0
+                        attr.get("reserve_in_usd") or 0
                     )
 
-                    # ====================================
-                    # VOLUME
-                    # ====================================
-
-                    vol_data = attr.get(
-                        "volume_usd",
-                        {}
-                    )
+                    volume_data = attr.get("volume_usd", {})
 
                     volume = float(
-                        vol_data.get("h24") or 0
+                        volume_data.get("h24") or 0
                     )
 
                     if volume == 0:
-
-                        volume = (
-                            float(
-                                vol_data.get("h1") or 0
-                            ) * 24
-                        )
+                        volume = float(
+                            volume_data.get("h1") or 0
+                        ) * 24
 
                     if volume == 0:
+                        volume = float(
+                            volume_data.get("m5") or 0
+                        ) * 288
 
-                        volume = (
-                            float(
-                                vol_data.get("m5") or 0
-                            ) * 288
-                        )
-
-                    # ====================================
+                    # =================================
                     # PRICE CHANGE
-                    # ====================================
+                    # =================================
 
                     change_data = attr.get(
                         "price_change_percentage",
@@ -403,19 +371,15 @@ def scanner():
                     )
 
                     price_change = float(
-
                         change_data.get("h24")
-
                         or change_data.get("h1")
-
                         or change_data.get("m5")
-
                         or 0
                     )
 
-                    # ====================================
-                    # LOGS
-                    # ====================================
+                    # =================================
+                    # LOG
+                    # =================================
 
                     logging.info(
                         f"💎 {symbol} | "
@@ -423,77 +387,65 @@ def scanner():
                         f"Vol ${volume:,.0f}"
                     )
 
-                    # ====================================
-                    # FINAL FILTERS
-                    # ====================================
+                    # =================================
+                    # FILTERS
+                    # =================================
 
-                    if liquidity < 7000:
+                    if liquidity < 10000:
                         continue
 
-                    if liquidity > 5000000:
+                    if volume < 5000:
                         continue
 
-                    if volume < 1000:
-                        continue
-
-                    # ====================================
+                    # =================================
                     # SEND ALERT
-                    # ====================================
+                    # =================================
 
                     success = send_alert(
-
-                        symbol,
-                        name,
-                        liquidity,
-                        volume,
-                        pair_address,
-                        price_change
+                        symbol=symbol,
+                        name=pool_name,
+                        liquidity=liquidity,
+                        volume=volume,
+                        pair_address=pair_address,
+                        price_change=price_change
                     )
 
-                    # ====================================
-                    # SUCCESS
-                    # ====================================
+                    # =================================
+                    # SAVE CACHE
+                    # =================================
 
                     if success:
 
-                        SENT_PAIRS[
-                            pair_address
-                        ] = now
+                        SENT_PAIRS[pair_address] = now
 
                         alerts += 1
 
                         time.sleep(3)
 
-                    # LIMIT ALERTS
+                    # =================================
+                    # ALERT LIMIT
+                    # =================================
 
                     if alerts >= 5:
                         break
 
                 except Exception as e:
 
-                    logging.error(
-                        f"Pool Error: {e}"
-                    )
+                    logging.error(f"Pool Error: {e}")
 
-            logging.info(
-                f"✅ Scan Complete | Alerts: {alerts}"
-            )
+            logging.info(f"✅ Scan Complete | Alerts: {alerts}")
 
         except Exception as e:
 
-            logging.error(
-                f"Scanner Error: {e}"
-            )
+            logging.error(f"Scanner Error: {e}")
 
-        logging.info(
-            "⏳ Waiting 60s..."
-        )
+        logging.info("⏳ Waiting 60 seconds...")
 
         time.sleep(60)
 
-# ============================================
-# START
-# ============================================
+# =========================================================
+# MAIN
+# =========================================================
 
 if __name__ == "__main__":
 
@@ -504,9 +456,7 @@ if __name__ == "__main__":
 
     t.start()
 
-    port = int(
-        os.getenv("PORT", 10000)
-    )
+    port = int(os.getenv("PORT", 10000))
 
     app.run(
         host="0.0.0.0",
