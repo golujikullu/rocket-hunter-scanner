@@ -5,171 +5,114 @@ import logging
 from threading import Thread
 from flask import Flask
 
-# =========================
-# LOGGING
-# =========================
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# =========================
-# FLASK
-# =========================
-
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "🚀 Rocket Hunter LIVE"
+    return "Rocket Hunter LIVE 🚀"
 
-# =========================
-# TELEGRAM CONFIG
-# =========================
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-# =========================
-# API
-# =========================
-
-DEX_API = "https://api.dexscreener.com/latest/dex/search?q=solana"
-
-# =========================
-# SETTINGS
-# =========================
+# WORKING API
+DEX_API = "https://api.dexscreener.com/latest/dex/search?q=SOL"
 
 SCAN_INTERVAL = 20
 
 MIN_LIQUIDITY = 500
 MIN_VOLUME = 100
 
-MAX_ALERTS_PER_SCAN = 5
+SEEN = {}
 
-# =========================
-# DUPLICATE FILTER
-# =========================
+COOLDOWN = 7200
 
-SENT_PAIRS = {}
+def send_telegram(msg):
 
-COOLDOWN_SECONDS = 7200
-
-# =========================
-# TELEGRAM FUNCTION
-# =========================
-
-def send_telegram(message):
-
-    if not TELEGRAM_BOT_TOKEN:
-        logging.error("❌ TELEGRAM_BOT_TOKEN missing")
+    if not BOT_TOKEN or not CHAT_ID:
+        logging.error("Telegram ENV missing")
         return False
 
-    if not TELEGRAM_CHAT_ID:
-        logging.error("❌ TELEGRAM_CHAT_ID missing")
-        return False
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message
+        "chat_id": CHAT_ID,
+        "text": msg
     }
 
     try:
 
-        response = requests.post(
+        r = requests.post(
             url,
             data=payload,
             timeout=10
         )
 
-        logging.info(f"📩 Telegram Status: {response.status_code}")
+        logging.info(f"Telegram: {r.status_code}")
 
-        return response.status_code == 200
+        return r.status_code == 200
 
     except Exception as e:
 
-        logging.error(f"❌ Telegram Error: {e}")
+        logging.error(e)
 
         return False
 
-# =========================
-# SCANNER
-# =========================
-
 def scan():
 
-    global SENT_PAIRS
-
-    logging.info("🔎 Scanning Solana pairs...")
+    logging.info("Scanning...")
 
     try:
 
-        response = requests.get(
+        r = requests.get(
             DEX_API,
             timeout=15
         )
 
-        logging.info(f"✅ API STATUS: {response.status_code}")
+        logging.info(f"API STATUS: {r.status_code}")
 
-        if response.status_code != 200:
+        if r.status_code != 200:
             return
 
-        data = response.json()
+        data = r.json()
 
         pairs = data.get("pairs", [])
 
-        logging.info(f"📊 Pairs Found: {len(pairs)}")
-
-        alerts_sent = 0
+        logging.info(f"Pairs: {len(pairs)}")
 
         now = time.time()
+
+        alerts = 0
 
         for pair in pairs:
 
             try:
 
-                chain = pair.get("chainId", "")
-
-                if chain != "solana":
+                if pair.get("chainId") != "solana":
                     continue
 
                 base = pair.get("baseToken", {})
 
-                token_name = base.get("name", "").strip()
-                token_symbol = base.get("symbol", "").strip()
+                symbol = base.get("symbol", "")
+                name = base.get("name", "")
 
-                if not token_name:
+                if not symbol or not name:
                     continue
 
-                if not token_symbol:
-                    continue
+                # skip big coins
 
-                # skip major tokens
-
-                if token_symbol.upper() in [
+                if symbol.upper() in [
                     "SOL",
                     "USDC",
                     "USDT",
                     "BTC",
                     "ETH",
-                    "WETH",
                     "WSOL"
                 ]:
-                    continue
-
-                pair_address = pair.get("pairAddress", "")
-
-                if not pair_address:
-                    continue
-
-                # duplicate cooldown
-
-                last_seen = SENT_PAIRS.get(pair_address, 0)
-
-                if now - last_seen < COOLDOWN_SECONDS:
                     continue
 
                 liquidity = float(
@@ -181,12 +124,10 @@ def scan():
                 )
 
                 logging.info(
-                    f"🚀 {token_symbol} | "
-                    f"Liq ${liquidity:.2f} | "
-                    f"Vol ${volume:.2f}"
+                    f"{symbol} | "
+                    f"Liq ${liquidity} | "
+                    f"Vol ${volume}"
                 )
-
-                # filters
 
                 if liquidity < MIN_LIQUIDITY:
                     continue
@@ -194,90 +135,81 @@ def scan():
                 if volume < MIN_VOLUME:
                     continue
 
-                # mark as seen
+                pair_address = pair.get("pairAddress")
 
-                SENT_PAIRS[pair_address] = now
+                if not pair_address:
+                    continue
 
-                # cleanup memory
+                last = SEEN.get(pair_address, 0)
 
-                if len(SENT_PAIRS) > 1000:
-                    SENT_PAIRS = {}
+                if now - last < COOLDOWN:
+                    continue
 
-                dex_url = pair.get("url", "")
+                SEEN[pair_address] = now
 
-                message = f"""
+                link = pair.get("url", "")
+
+                msg = f"""
 🚀 ROCKET ALERT
 
-💎 {token_name} ({token_symbol})
+💎 {name} ({symbol})
 
 💧 Liquidity: ${liquidity:,.2f}
 
 📊 Volume: ${volume:,.2f}
 
-🔗 {dex_url}
+🔗 {link}
 """
 
-                success = send_telegram(message)
+                ok = send_telegram(msg)
 
-                if success:
+                if ok:
+
+                    alerts += 1
 
                     logging.info(
-                        f"✅ ALERT SENT: {token_symbol}"
+                        f"ALERT SENT: {symbol}"
                     )
-
-                    alerts_sent += 1
 
                 time.sleep(2)
 
-                if alerts_sent >= MAX_ALERTS_PER_SCAN:
+                if alerts >= 5:
                     break
 
             except Exception as pair_error:
 
-                logging.error(
-                    f"❌ Pair Error: {pair_error}"
-                )
+                logging.error(pair_error)
 
-        logging.info(
-            f"✅ Scan Complete | Alerts: {alerts_sent}"
-        )
+        logging.info(f"Scan done | Alerts {alerts}")
 
     except Exception as e:
 
-        logging.error(f"❌ Scan Error: {e}")
+        logging.error(e)
 
-# =========================
-# LOOP
-# =========================
-
-def scanner_loop():
+def loop():
 
     while True:
 
         scan()
 
         logging.info(
-            f"⏳ Waiting {SCAN_INTERVAL} seconds..."
+            f"Waiting {SCAN_INTERVAL}s..."
         )
 
         time.sleep(SCAN_INTERVAL)
 
-# =========================
-# MAIN
-# =========================
-
 if __name__ == "__main__":
 
-    logging.info("🚀 Rocket Hunter Starting...")
-
-    scanner_thread = Thread(
-        target=scanner_loop,
+    t = Thread(
+        target=loop,
         daemon=True
     )
 
-    scanner_thread.start()
+    t.start()
 
-    port = int(os.getenv("PORT", 10000))
+    port = int(
+        os.getenv("PORT", 10000)
+    )
 
     app.run(
         host="0.0.0.0",
