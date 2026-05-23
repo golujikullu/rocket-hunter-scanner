@@ -25,7 +25,7 @@ def home():
     return "🚀 Rocket Hunter LIVE"
 
 # =========================
-# TELEGRAM
+# TELEGRAM CONFIG
 # =========================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -35,7 +35,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # API
 # =========================
 
-DEX_API = "https://api.dexscreener.com/latest/dex/pairs/solana"
+DEX_API = "https://api.dexscreener.com/latest/dex/search?q=solana"
 
 # =========================
 # SETTINGS
@@ -139,7 +139,6 @@ def scan():
                 base = pair.get("baseToken", {})
 
                 token_name = base.get("name", "").strip()
-
                 token_symbol = base.get("symbol", "").strip()
 
                 if not token_name:
@@ -148,7 +147,7 @@ def scan():
                 if not token_symbol:
                     continue
 
-                # skip main tokens
+                # skip major tokens
 
                 if token_symbol.upper() in [
                     "SOL",
@@ -166,7 +165,7 @@ def scan():
                 if not pair_address:
                     continue
 
-                # cooldown duplicate filter
+                # duplicate cooldown
 
                 last_seen = SENT_PAIRS.get(pair_address, 0)
 
@@ -195,7 +194,7 @@ def scan():
                 if volume < MIN_VOLUME:
                     continue
 
-                # mark seen
+                # mark as seen
 
                 SENT_PAIRS[pair_address] = now
 
