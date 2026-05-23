@@ -1,9 +1,9 @@
+import os
+import time
+import requests
+import logging
 from flask import Flask
 from threading import Thread
-import requests
-import time
-import os
-import logging
 
 # =========================
 # LOGGING
@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 
 # =========================
-# FLASK APP
+# FLASK
 # =========================
 
 app = Flask(__name__)
@@ -25,20 +25,20 @@ def home():
     return "🚀 Rocket Hunter LIVE", 200
 
 # =========================
-# ENV VARIABLES
+# TELEGRAM
 # =========================
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # =========================
 # DEXSCREENER API
 # =========================
 
-DEX_URL = "https://api.dexscreener.com/latest/dex/search?q=SOL"
+DEX_URL = "https://api.dexscreener.com/latest/dex/pairs/solana"
 
 # =========================
-# MEMORY CACHE
+# CACHE
 # =========================
 
 SENT_PAIRS = set()
@@ -47,31 +47,25 @@ SENT_PAIRS = set()
 # TELEGRAM ALERT
 # =========================
 
-def send_telegram_alert(
-    name,
-    symbol,
-    liquidity,
-    volume,
-    pair_address
-):
+def send_telegram_alert(name, symbol, liquidity, volume, pair_address):
 
     message = f"""
 🚀 Rocket Hunter Alert
 
 💎 Token: {name} ({symbol})
 
-💰 Liquidity: ${liquidity:,.0f}
+💰 Liquidity: ${liquidity}
 
-📊 Volume 24h: ${volume:,.0f}
+📊 Volume: ${volume}
 
-🔗 DexScreener:
+🔗 Pair:
 https://dexscreener.com/solana/{pair_address}
 """
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": CHAT_ID,
         "text": message
     }
 
@@ -83,27 +77,25 @@ https://dexscreener.com/solana/{pair_address}
             timeout=10
         )
 
+        logging.info(f"Telegram Status: {response.status_code}")
+
         if response.status_code == 200:
             logging.info(f"✅ ALERT SENT: {symbol}")
             return True
 
         else:
-            logging.error(
-                f"❌ Telegram Error: {response.text}"
-            )
+            logging.error(response.text)
+            return False
 
     except Exception as e:
-        logging.error(f"❌ Telegram Failed: {e}")
-
-    return False
+        logging.error(f"Telegram Error: {e}")
+        return False
 
 # =========================
-# SCANNER LOOP
+# SCANNER
 # =========================
 
 def scanner():
-
-    global SENT_PAIRS
 
     logging.info("🚀 Scanner Started")
 
@@ -111,14 +103,14 @@ def scanner():
 
         try:
 
+            logging.info(DEX_URL)
+
             response = requests.get(
                 DEX_URL,
                 timeout=15
             )
 
-            logging.info(
-                f"✅ API STATUS: {response.status_code}"
-            )
+            logging.info(f"API STATUS: {response.status_code}")
 
             if response.status_code != 200:
                 time.sleep(20)
@@ -128,93 +120,33 @@ def scanner():
 
             pairs = data.get("pairs", [])
 
-            logging.info(
-                f"📊 Pairs Found: {len(pairs)}"
-            )
+            logging.info(f"Pairs Found: {len(pairs)}")
+
+            alerts = 0
 
             for pair in pairs:
 
                 try:
 
-                    # =========================
-                    # ONLY SOLANA
-                    # =========================
-
-                    if pair.get("chainId") != "solana":
-                        continue
-
-                    pair_address = pair.get(
-                        "pairAddress",
-                        ""
-                    )
+                    pair_address = pair.get("pairAddress")
 
                     if not pair_address:
                         continue
 
-                    # =========================
-                    # DUPLICATE SKIP
-                    # =========================
-
                     if pair_address in SENT_PAIRS:
                         continue
 
-                    # =========================
-                    # TOKEN DATA
-                    # =========================
+                    base_token = pair.get("baseToken", {})
 
-                    base_token = pair.get(
-                        "baseToken",
-                        {}
-                    )
-
-                    symbol = base_token.get(
-                        "symbol",
-                        ""
-                    ).strip()
-
-                    name = base_token.get(
-                        "name",
-                        ""
-                    ).strip()
-
-                    # =========================
-                    # UNKNOWN FILTER
-                    # =========================
-
-                    if not symbol:
-                        continue
-
-                    if not name:
-                        continue
-
-                    if symbol == "???":
-                        continue
-
-                    if name.lower() == "unknown":
-                        continue
-
-                    # =========================
-                    # LIQUIDITY + VOLUME
-                    # =========================
+                    name = base_token.get("name", "Unknown")
+                    symbol = base_token.get("symbol", "???")
 
                     liquidity_usd = float(
-                        pair.get(
-                            "liquidity",
-                            {}
-                        ).get(
-                            "usd",
-                            0
-                        )
+                        pair.get("liquidity", {}).get("usd", 0)
                     )
 
                     volume_usd = float(
-                        pair.get(
-                            "volume",
-                            {}
-                        ).get(
-                            "h24",
-                            0
-                        )
+                        pair.get("volume", {}).get("h24", 0)
                     )
 
                     logging.info(
@@ -230,7 +162,7 @@ def scanner():
                     if liquidity_usd < 500:
                         continue
 
-                    if volume_usd < 500:
+                    if volume_usd < 1000:
                         continue
 
                     # =========================
@@ -247,41 +179,32 @@ def scanner():
 
                     if success:
 
-                        SENT_PAIRS.add(
-                            pair_address
-                        )
+                        SENT_PAIRS.add(pair_address)
+
+                        alerts += 1
 
                         logging.info(
-                            f"🔥 REAL ALERT: {symbol}"
+                            f"🔥 ALERT COUNT: {alerts}"
                         )
 
-                        # cache clean
-                        if len(SENT_PAIRS) > 1000:
-                            SENT_PAIRS.clear()
+                        time.sleep(2)
 
-                        time.sleep(5)
+                except Exception as e:
+                    logging.error(f"Pair Error: {e}")
 
-                except Exception as pair_error:
-
-                    logging.error(
-                        f"❌ Pair Error: {pair_error}"
-                    )
-
-        except Exception as e:
-
-            logging.error(
-                f"❌ Scanner Error: {e}"
+            logging.info(
+                f"✅ Scan done | Alerts {alerts}"
             )
 
-        # =========================
-        # LOOP DELAY
-        # =========================
+        except Exception as e:
+            logging.error(f"Scanner Crash: {e}")
 
         logging.info("⏳ Waiting 20 seconds...")
+
         time.sleep(20)
 
 # =========================
-# START
+# MAIN
 # =========================
 
 if __name__ == "__main__":
@@ -294,7 +217,7 @@ if __name__ == "__main__":
     thread.start()
 
     port = int(
-        os.getenv("PORT", 5000)
+        os.getenv("PORT", 10000)
     )
 
     app.run(
