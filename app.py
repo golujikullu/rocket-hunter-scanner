@@ -17,14 +17,14 @@ logging.basicConfig(
 )
 
 # =========================================================
-# FLASK
+# FLASK APP
 # =========================================================
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🚀 Rocket Hunter V1.2 LIVE", 200
+    return "🚀 Rocket Hunter V1.3 LIVE", 200
 
 # =========================================================
 # ENV VARIABLES
@@ -43,29 +43,12 @@ DEX_URL = "https://api.geckoterminal.com/api/v2/networks/solana/new_pools"
 # MEMORY CACHE
 # =========================================================
 
-SENT_PAIRS = {}
+SENT_TOKENS = {}
 
-COOLDOWN = 7200  # 2 HOURS
-
-# =========================================================
-# BAD WORD FILTER
-# =========================================================
-
-BAD_WORDS = [
-    "SPERM",
-    "SEX",
-    "PORN",
-    "XXX",
-    "SCAM",
-    "RUG",
-    "TEST",
-    "CUM",
-    "BOOB",
-    "FUCK"
-]
+COOLDOWN = 1800  # 30 MINUTES
 
 # =========================================================
-# AGE CLASSIFICATION ENGINE
+# ENTRY LABEL ENGINE
 # =========================================================
 
 def get_entry_label(age_hours):
@@ -82,12 +65,11 @@ def get_entry_label(age_hours):
     return None
 
 # =========================================================
-# SEND TELEGRAM ALERT
+# TELEGRAM ALERT
 # =========================================================
 
 def send_alert(
     symbol,
-    name,
     liquidity,
     volume,
     pair_address,
@@ -102,24 +84,27 @@ def send_alert(
     if liquidity > 50000 and volume > 20000:
         risk = "🛡️ LOW RISK"
 
-    elif liquidity > 15000:
+    elif liquidity > 10000:
         risk = "⚠️ MEDIUM RISK"
 
     else:
         risk = "🔴 HIGH RISK"
 
     # =====================================================
-    # PRICE ICON
+    # PRICE CHANGE ICON
     # =====================================================
 
     change_icon = "📈" if price_change >= 0 else "📉"
 
     # =====================================================
-    # CLEAN TEXT
+    # SAFE SYMBOL
     # =====================================================
 
-    clean_symbol = symbol.replace("<", "").replace(">", "")
-    clean_name = name.replace("<", "").replace(">", "")
+    clean_symbol = (
+        symbol
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
 
     # =====================================================
     # MESSAGE
@@ -130,12 +115,11 @@ def send_alert(
 
         f"{entry_label}\n\n"
 
-        f"💎 <b>{clean_symbol}</b>\n"
-        f"🪙 {clean_name}\n\n"
+        f"💎 <b>{clean_symbol} / SOL</b>\n\n"
 
-        f"💧 Liquidity: <b>${liquidity:,.0f}</b>\n"
-        f"📊 Volume: <b>${volume:,.0f}</b>\n"
-        f"{change_icon} Change: <b>{price_change:.1f}%</b>\n\n"
+        f"💧 Liquidity: ${liquidity:,.0f}\n"
+        f"📊 Volume: ${volume:,.0f}\n"
+        f"{change_icon} Change: {price_change:.1f}%\n\n"
 
         f"{risk}"
     )
@@ -144,7 +128,7 @@ def send_alert(
     # BUTTONS
     # =====================================================
 
-    keyboard = {
+    inline_keyboard = {
         "inline_keyboard": [[
             {
                 "text": "📊 DexScreener",
@@ -158,16 +142,19 @@ def send_alert(
     }
 
     # =====================================================
-    # TELEGRAM
+    # TELEGRAM REQUEST
     # =====================================================
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = (
+        f"https://api.telegram.org/bot"
+        f"{TELEGRAM_BOT_TOKEN}/sendMessage"
+    )
 
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
         "parse_mode": "HTML",
-        "reply_markup": keyboard,
+        "reply_markup": inline_keyboard,
         "disable_web_page_preview": True
     }
 
@@ -176,26 +163,28 @@ def send_alert(
         res = requests.post(
             url,
             json=payload,
-            timeout=15
+            timeout=10
         )
-
-        logging.info(f"Telegram Status: {res.status_code}")
 
         if res.status_code == 200:
 
             logging.info(
-                f"✅ ALERT SENT: {symbol} | {entry_label}"
+                f"✅ ALERT: {symbol} | {entry_label}"
             )
 
             return True
 
         else:
 
-            logging.error(res.text)
+            logging.error(
+                f"Telegram Error: {res.text}"
+            )
 
     except Exception as e:
 
-        logging.error(f"Telegram Error: {e}")
+        logging.error(
+            f"Telegram Exception: {e}"
+        )
 
     return False
 
@@ -212,11 +201,19 @@ def scanner():
     # =====================================================
 
     if not TELEGRAM_BOT_TOKEN:
-        logging.error("❌ TELEGRAM_BOT_TOKEN MISSING")
+
+        logging.error(
+            "❌ TELEGRAM_BOT_TOKEN missing!"
+        )
+
         return
 
     if not TELEGRAM_CHAT_ID:
-        logging.error("❌ TELEGRAM_CHAT_ID MISSING")
+
+        logging.error(
+            "❌ TELEGRAM_CHAT_ID missing!"
+        )
+
         return
 
     # =====================================================
@@ -229,105 +226,107 @@ def scanner():
 
             now = time.time()
 
-            # =================================================
+            # =============================================
             # CACHE CLEANUP
-            # =================================================
+            # =============================================
 
-            expired = []
+            expired = [
+                k for k, v in SENT_TOKENS.items()
+                if now - v > COOLDOWN
+            ]
 
-            for pair, ts in SENT_PAIRS.items():
+            for k in expired:
+                del SENT_TOKENS[k]
 
-                if now - ts > COOLDOWN:
-                    expired.append(pair)
+            # =============================================
+            # MEMORY SAFETY
+            # =============================================
 
-            for pair in expired:
-                del SENT_PAIRS[pair]
+            if len(SENT_TOKENS) > 5000:
 
-            # =================================================
+                SENT_TOKENS.clear()
+
+                logging.info(
+                    "🧹 Cache flushed"
+                )
+
+            # =============================================
             # API REQUEST
-            # =================================================
+            # =============================================
 
             headers = {
                 "User-Agent": "Mozilla/5.0"
             }
 
-            response = requests.get(
+            res = requests.get(
                 DEX_URL,
                 headers=headers,
-                timeout=20
+                timeout=15
             )
 
             logging.info(
-                f"API STATUS: {response.status_code}"
+                f"API STATUS: {res.status_code}"
             )
 
-            # =================================================
+            # =============================================
             # RATE LIMIT
-            # =================================================
+            # =============================================
 
-            if response.status_code == 429:
+            if res.status_code == 429:
 
                 logging.warning(
-                    "⚠️ RATE LIMITED"
+                    "⚠️ Rate limited! Waiting 90s..."
                 )
 
                 time.sleep(90)
 
                 continue
 
-            # =================================================
+            # =============================================
             # BAD RESPONSE
-            # =================================================
+            # =============================================
 
-            if response.status_code != 200:
-
-                logging.warning(
-                    "❌ BAD API RESPONSE"
-                )
+            elif res.status_code != 200:
 
                 time.sleep(30)
 
                 continue
 
-            # =================================================
-            # JSON
-            # =================================================
+            # =============================================
+            # JSON DATA
+            # =============================================
 
-            data = response.json()
-
-            pools = data.get("data", [])
+            pools = res.json().get("data", [])
 
             logging.info(
-                f"📊 Pools Found: {len(pools)}"
+                f"📊 Pools: {len(pools)}"
             )
 
             alerts = 0
 
-            # =================================================
-            # LOOP POOLS
-            # =================================================
+            # =============================================
+            # LOOP THROUGH POOLS
+            # =============================================
 
             for pool in pools:
 
                 try:
 
-                    attr = pool.get("attributes", {})
+                    attr = pool.get(
+                        "attributes",
+                        {}
+                    )
 
-                    pair_address = attr.get("address")
-
-                    # =============================================
-                    # DUPLICATE PROTECTION
-                    # =============================================
+                    pair_address = attr.get(
+                        "address"
+                    )
 
                     if not pair_address:
                         continue
 
-                    if pair_address in SENT_PAIRS:
-                        continue
-
-                    # =============================================
+                    # =====================================
                     # POOL AGE FILTER
-                    # =============================================
+                    # =====================================
 
                     created_at = attr.get(
                         "pool_created_at",
@@ -338,10 +337,15 @@ def scanner():
                         continue
 
                     pool_time = datetime.fromisoformat(
-                        created_at.replace("Z", "+00:00")
+                        created_at.replace(
+                            "Z",
+                            "+00:00"
+                        )
                     )
 
-                    now_utc = datetime.now(timezone.utc)
+                    now_utc = datetime.now(
+                        timezone.utc
+                    )
 
                     age_hours = (
                         now_utc - pool_time
@@ -351,114 +355,136 @@ def scanner():
                         age_hours
                     )
 
-                    # =============================================
-                    # IGNORE OLD POOLS
-                    # =============================================
-
                     if entry_label is None:
                         continue
 
-                    # =============================================
-                    # TOKEN NAME
-                    # =============================================
+                    # =====================================
+                    # SYMBOL EXTRACTION
+                    # =====================================
 
-                    pool_name = attr.get("name", "")
+                    pool_name = attr.get(
+                        "name",
+                        ""
+                    )
 
                     if " / " in pool_name:
 
-                        symbol = pool_name.split(
-                            " / "
-                        )[0].strip()
+                        symbol = (
+                            pool_name
+                            .split(" / ")[0]
+                            .strip()
+                        )
 
                     elif "/" in pool_name:
 
-                        symbol = pool_name.split(
-                            "/"
-                        )[0].strip()
+                        symbol = (
+                            pool_name
+                            .split("/")[0]
+                            .strip()
+                        )
 
                     else:
 
                         symbol = (
-                            pool_name[:12]
+                            pool_name[:10]
                             if pool_name
-                            else "UNKNOWN"
+                            else "Unknown"
                         )
 
-                    # =============================================
-                    # EMPTY FIX
-                    # =============================================
-
-                    if not symbol:
-                        symbol = "UNKNOWN"
-
-                    # =============================================
+                    # =====================================
                     # SKIP BASE TOKENS
-                    # =============================================
+                    # =====================================
 
                     if symbol.lower() in [
                         "sol",
                         "wsol",
                         "usdc",
-                        "usdt"
+                        "usdt",
+                        "unknown"
                     ]:
                         continue
 
-                    # =============================================
-                    # BAD WORD FILTER
-                    # =============================================
+                    # =====================================
+                    # DUPLICATE SHIELD
+                    # =====================================
 
-                    if any(
-                        word in symbol.upper()
-                        for word in BAD_WORDS
-                    ):
+                    relationships = pool.get(
+                        "relationships",
+                        {}
+                    )
+
+                    base_token_data = (
+                        relationships
+                        .get("base_token", {})
+                        .get("data", {})
+                    )
+
+                    mint_address = (
+                        base_token_data.get("id")
+                    )
+
+                    # Fallback if mint missing
+
+                    if mint_address in [
+                        None,
+                        "",
+                        "null"
+                    ]:
+                        mint_address = symbol.upper()
+
+                    token_key = mint_address
+
+                    last_sent = SENT_TOKENS.get(
+                        token_key,
+                        0
+                    )
+
+                    if now - last_sent < COOLDOWN:
+
+                        logging.info(
+                            f"⏭️ Duplicate skip: {symbol}"
+                        )
+
                         continue
 
-                    # =============================================
-                    # TOKEN NAME
-                    # =============================================
-
-                    name = (
-                        pool_name
-                        if pool_name
-                        else "Unknown"
-                    )
-
-                    # =============================================
+                    # =====================================
                     # LIQUIDITY
-                    # =============================================
+                    # =====================================
 
                     liquidity = float(
-                        attr.get("reserve_in_usd") or 0
+                        attr.get(
+                            "reserve_in_usd"
+                        ) or 0
                     )
 
-                    # =============================================
+                    # =====================================
                     # VOLUME ENGINE
-                    # =============================================
+                    # =====================================
 
-                    volume_data = attr.get(
+                    vol_data = attr.get(
                         "volume_usd",
                         {}
                     )
 
                     volume = float(
-                        volume_data.get("h24") or 0
+                        vol_data.get("h24") or 0
                     )
 
                     if volume == 0:
 
                         volume = float(
-                            volume_data.get("h1") or 0
+                            vol_data.get("h1") or 0
                         ) * 24
 
                     if volume == 0:
 
                         volume = float(
-                            volume_data.get("m5") or 0
+                            vol_data.get("m5") or 0
                         ) * 288
 
-                    # =============================================
+                    # =====================================
                     # PRICE CHANGE
-                    # =============================================
+                    # =====================================
 
                     change_data = attr.get(
                         "price_change_percentage",
@@ -472,68 +498,49 @@ def scanner():
                         or 0
                     )
 
-                    # =============================================
-                    # EARLY LOG
-                    # =============================================
-
                     logging.info(
-                        f"⏰ {entry_label} | "
-                        f"{symbol} | "
-                        f"Liq ${liquidity:,.0f} | "
-                        f"Vol ${volume:,.0f}"
+                        f"💎 {symbol} | "
+                        f"Age:{age_hours:.1f}h | "
+                        f"Liq:${liquidity:,.0f} | "
+                        f"Vol:${volume:,.0f}"
                     )
 
-                    # =============================================
-                    # DYNAMIC FILTERS
-                    # =============================================
+                    # =====================================
+                    # FILTERS
+                    # =====================================
 
-                    if entry_label == "⚡ ULTRA EARLY":
-
-                        min_liq = 3000
-                        min_vol = 1500
-
-                    else:
-
-                        min_liq = 5000
-                        min_vol = 3000
-
-                    if liquidity < min_liq:
+                    if liquidity < 5000:
                         continue
 
-                    if volume < min_vol:
+                    if volume < 3000:
                         continue
 
-                    # =============================================
+                    # =====================================
                     # SEND ALERT
-                    # =============================================
+                    # =====================================
 
                     success = send_alert(
-                        symbol=symbol,
-                        name=name,
-                        liquidity=liquidity,
-                        volume=volume,
-                        pair_address=pair_address,
-                        price_change=price_change,
-                        entry_label=entry_label
+                        symbol,
+                        liquidity,
+                        volume,
+                        pair_address,
+                        price_change,
+                        entry_label
                     )
-
-                    # =============================================
-                    # SAVE CACHE
-                    # =============================================
 
                     if success:
 
-                        SENT_PAIRS[pair_address] = now
+                        SENT_TOKENS[token_key] = now
 
                         alerts += 1
 
                         time.sleep(3)
 
-                    # =============================================
+                    # =====================================
                     # ALERT LIMIT
-                    # =============================================
+                    # =====================================
 
-                    if alerts >= 5:
+                    if alerts >= 3:
                         break
 
                 except Exception as e:
@@ -543,7 +550,7 @@ def scanner():
                     )
 
             logging.info(
-                f"✅ Scan Complete | Alerts: {alerts}"
+                f"✅ Done | Alerts: {alerts}"
             )
 
         except Exception as e:
@@ -553,7 +560,7 @@ def scanner():
             )
 
         logging.info(
-            "⏳ Waiting 60 seconds..."
+            "⏳ Waiting 60s..."
         )
 
         time.sleep(60)
@@ -571,7 +578,9 @@ if __name__ == "__main__":
 
     t.start()
 
-    port = int(os.getenv("PORT", 10000))
+    port = int(
+        os.getenv("PORT", 10000)
+    )
 
     app.run(
         host="0.0.0.0",
