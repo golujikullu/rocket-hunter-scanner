@@ -1,9 +1,22 @@
 import os
-import json
 import time
-import threading
+import logging
 import requests
-from flask import Flask, jsonify
+from threading import Thread
+from flask import Flask
+
+# =========================
+# LOGGING
+# =========================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+# =========================
+# FLASK
+# =========================
 
 app = Flask(__name__)
 
@@ -11,440 +24,345 @@ app = Flask(__name__)
 # ENV VARIABLES
 # =========================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-
-COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", "7200"))
-SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "120"))
-MAX_ALERTS_PER_SCAN = int(os.getenv("MAX_ALERTS_PER_SCAN", "5"))
-
-SEEN_FILE = os.getenv("SEEN_FILE", "/tmp/seen_tokens.json")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # =========================
-# MEMORY
+# API
 # =========================
 
-seen_tokens = {}
+DEXSCREENER_API_URL = (
+    "https://api.dexscreener.com/latest/dex/search?q=solana"
+)
 
 # =========================
-# FILTERS
+# SETTINGS
 # =========================
 
-BAD_WORDS = {
-    "creator",
-    "official",
-    "website",
-    "telegram",
-    "twitter",
-    "pumpfun",
-    "airdrop",
-    "follow",
-    "join",
-}
-
-BASE_TICKERS = {
-    "SOL",
-    "WSOL",
-    "USDC",
-    "USDT",
-}
+SCAN_INTERVAL = 20
+MIN_LIQUIDITY = 5000
+MIN_VOLUME = 10000
 
 # =========================
-# REQUEST SESSION
+# DUPLICATE FILTER
 # =========================
 
-session = requests.Session()
+SENT_PAIRS = {}
 
-session.headers.update({
-    "User-Agent": "RocketHunter/4.0"
-})
+COOLDOWN_SECONDS = 7200
 
 # =========================
-# LOAD SEEN TOKENS
+# FLASK ROUTE
 # =========================
 
-def load_seen():
-    global seen_tokens
-
-    try:
-        if os.path.exists(SEEN_FILE):
-
-            with open(SEEN_FILE, "r", encoding="utf-8") as f:
-                seen_tokens = json.load(f)
-
-            print(f"✅ LOADED {len(seen_tokens)} TOKENS", flush=True)
-
-        else:
-            seen_tokens = {}
-
-    except Exception as e:
-        print("❌ LOAD ERROR:", e, flush=True)
-        seen_tokens = {}
-
-# =========================
-# SAVE SEEN TOKENS
-# =========================
-
-def save_seen():
-
-    try:
-        parent = os.path.dirname(SEEN_FILE)
-
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-
-        with open(SEEN_FILE, "w", encoding="utf-8") as f:
-            json.dump(seen_tokens, f)
-
-    except Exception as e:
-        print("❌ SAVE ERROR:", e, flush=True)
-
-# =========================
-# CLEAN OLD TOKENS
-# =========================
-
-def prune_seen(now_ts):
-
-    old_tokens = []
-
-    for token_id, ts in list(seen_tokens.items()):
-
-        try:
-            if now_ts - float(ts) > (COOLDOWN_SECONDS * 2):
-                old_tokens.append(token_id)
-
-        except Exception:
-            old_tokens.append(token_id)
-
-    for token_id in old_tokens:
-        seen_tokens.pop(token_id, None)
+@app.route("/")
+def home():
+    return "🚀 Rocket Hunter LIVE"
 
 # =========================
 # TELEGRAM ALERT
 # =========================
 
-def send_telegram(message):
+def send_telegram_alert(
+    token_name,
+    symbol,
+    liquidity,
+    volume,
+    pair_address,
+    price
+):
 
-    if not BOT_TOKEN or not CHAT_ID:
-        print("❌ BOT TOKEN OR CHAT ID MISSING", flush=True)
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logging.error("❌ Telegram credentials missing")
         return False
 
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    dex_link = (
+        f"https://dexscreener.com/solana/{pair_address}"
+    )
+
+    message = f"""
+🚀 <b>Rocket Hunter Alert</b>
+
+💎 <b>{token_name} ({symbol})</b>
+
+💰 Price: ${price}
+
+💧 Liquidity: ${int(liquidity):,}
+
+📊 Volume 24H: ${int(volume):,}
+
+📈 <a href="{dex_link}">DexScreener Link</a>
+"""
+
+    url = (
+        f"https://api.telegram.org/bot"
+        f"{TELEGRAM_BOT_TOKEN}/sendMessage"
+    )
 
     payload = {
-        "chat_id": CHAT_ID,
+        "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
         "parse_mode": "HTML",
         "disable_web_page_preview": True
     }
 
     try:
-        response = session.post(url, json=payload, timeout=20)
 
-        print(f"📨 TELEGRAM STATUS: {response.status_code}", flush=True)
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=15
+        )
 
-        if response.status_code != 200:
-            print(response.text[:1000], flush=True)
-            return False
+        logging.info(
+            f"📩 Telegram Response: {response.text}"
+        )
 
-        return True
+        return response.status_code == 200
 
     except Exception as e:
-        print("❌ TELEGRAM ERROR:", e, flush=True)
+
+        logging.error(
+            f"❌ Telegram Error: {e}"
+        )
+
         return False
-
-# =========================
-# FETCH TOKENS
-# =========================
-
-def get_tokens():
-
-    url = "https://api.dexscreener.com/token-profiles/latest/v1"
-
-    try:
-        response = session.get(url, timeout=20)
-
-        print(f"✅ API STATUS: {response.status_code}", flush=True)
-
-        if response.status_code != 200:
-            return []
-
-        data = response.json()
-
-        if isinstance(data, list):
-            return data
-
-        if isinstance(data, dict):
-            return data.get("pairs", [])
-
-        return []
-
-    except Exception as e:
-        print("❌ API ERROR:", e, flush=True)
-        return []
-
-# =========================
-# FILTER BAD TOKENS
-# =========================
-
-def should_skip(token_name, token_symbol, description_text):
-
-    if token_symbol.upper() in BASE_TICKERS:
-        return True
-
-    lower_text = f"{token_name} {description_text}".lower()
-
-    for word in BAD_WORDS:
-        if word in lower_text:
-            return True
-
-    return False
-
-# =========================
-# MESSAGE FORMAT
-# =========================
-
-def build_message(token_name, token_symbol, token_id, pair_url):
-
-    short_name = token_name
-
-    if len(short_name) > 20:
-        short_name = short_name[:17] + "..."
-
-    return f"""
-🚀 <b>Rocket Hunter Alert</b>
-
-🪙 <b>Token:</b> {short_name} ({token_symbol})
-
-⛓ <b>Chain:</b> Solana
-
-📌 <b>Mint:</b>
-<code>{token_id}</code>
-
-🔗 <a href="{pair_url}">Trade on DexScreener</a>
-"""
 
 # =========================
 # MAIN SCANNER
 # =========================
 
-def scan_tokens():
+def scan_pairs():
 
-    print("🔎 SCANNING TOKENS...", flush=True)
+    global SENT_PAIRS
+
+    logging.info(
+        "🔎 Scanning Solana pairs..."
+    )
 
     try:
 
-        tokens = get_tokens()
+        response = requests.get(
+            DEXSCREENER_API_URL,
+            timeout=20
+        )
 
-        print(f"📊 TOKENS FOUND: {len(tokens)}", flush=True)
+        logging.info(
+            f"✅ API STATUS: {response.status_code}"
+        )
 
-        now_ts = time.time()
+        if response.status_code != 200:
+            return
 
-        prune_seen(now_ts)
+        data = response.json()
+
+        pairs = data.get("pairs", [])
+
+        logging.info(
+            f"📊 Pairs Found: {len(pairs)}"
+        )
+
+        now = time.time()
 
         alert_count = 0
 
-        for token in tokens[:100]:
+        for pair in pairs[:50]:
 
             try:
 
-                chain = str(
-                    token.get("chainId") or ""
-                ).lower().strip()
+                # =========================
+                # CHAIN CHECK
+                # =========================
 
-                if chain != "solana":
+                if pair.get("chainId") != "solana":
                     continue
+
+                # =========================
+                # SAFE PARSING
+                # =========================
+
+                base = pair.get("baseToken", {})
 
                 token_name = str(
-                    token.get("name")
-                    or token.get("tokenName")
-                    or ""
+                    base.get("name", "Unknown")
                 ).strip()
 
-                token_symbol = str(
-                    token.get("symbol")
-                    or token.get("tokenSymbol")
-                    or ""
+                symbol = str(
+                    base.get("symbol", "???")
                 ).strip()
 
-                token_id = str(
-                    token.get("tokenAddress")
-                    or token.get("address")
-                    or ""
-                ).strip()
-
-                description_text = str(
-                    token.get("description")
-                    or ""
-                ).strip()
-
-                pair_url = str(
-                    token.get("url")
-                    or ""
+                pair_address = str(
+                    pair.get("pairAddress", "")
                 ).strip()
 
                 # =========================
-                # EMPTY CHECKS
+                # EMPTY CHECK
                 # =========================
 
-                if not token_symbol:
-                    print("⏭ SKIP EMPTY SYMBOL", flush=True)
+                if not symbol or symbol == "???":
                     continue
 
-                if not token_name:
-                    print("⏭ SKIP EMPTY NAME", flush=True)
+                if not pair_address:
                     continue
 
-                if not token_id:
-                    print("⏭ SKIP EMPTY TOKEN ID", flush=True)
+                if symbol.upper() in [
+                    "SOL",
+                    "WSOL"
+                ]:
                     continue
 
-                print(
-                    f"🔥 FOUND TOKEN: {token_name} | {token_symbol}",
-                    flush=True
+                # =========================
+                # MARKET DATA
+                # =========================
+
+                liquidity = float(
+                    pair.get(
+                        "liquidity",
+                        {}
+                    ).get(
+                        "usd",
+                        0
+                    )
                 )
 
-                # =========================
-                # DEFAULT URL
-                # =========================
+                volume = float(
+                    pair.get(
+                        "volume",
+                        {}
+                    ).get(
+                        "h24",
+                        0
+                    )
+                )
 
-                if not pair_url:
-                    pair_url = f"https://dexscreener.com/solana/{token_id}"
+                price = pair.get(
+                    "priceUsd",
+                    "N/A"
+                )
 
                 # =========================
                 # FILTERS
                 # =========================
 
-                if should_skip(
-                    token_name,
-                    token_symbol,
-                    description_text
+                if liquidity < MIN_LIQUIDITY:
+                    continue
+
+                if volume < MIN_VOLUME:
+                    continue
+
+                # =========================
+                # DUPLICATE FILTER
+                # =========================
+
+                last_seen = SENT_PAIRS.get(
+                    pair_address,
+                    0
+                )
+
+                if (
+                    now - last_seen
+                    < COOLDOWN_SECONDS
                 ):
-                    print(f"⏭ FILTERED: {token_name}", flush=True)
                     continue
 
+                SENT_PAIRS[pair_address] = now
+
                 # =========================
-                # COOLDOWN
+                # ALERT
                 # =========================
 
-                last_seen = float(
-                    seen_tokens.get(token_id, 0)
+                logging.info(
+                    f"🚨 ALERT: "
+                    f"{token_name} ({symbol})"
                 )
 
-                if now_ts - last_seen < COOLDOWN_SECONDS:
-                    print(f"⏭ COOLDOWN: {token_symbol}", flush=True)
-                    continue
-
-                # =========================
-                # SEND ALERT
-                # =========================
-
-                message = build_message(
+                ok = send_telegram_alert(
                     token_name,
-                    token_symbol,
-                    token_id,
-                    pair_url
+                    symbol,
+                    liquidity,
+                    volume,
+                    pair_address,
+                    price
                 )
-
-                ok = send_telegram(message)
 
                 if ok:
-
-                    seen_tokens[token_id] = now_ts
-
-                    save_seen()
-
                     alert_count += 1
 
-                    print(
-                        f"🚨 ALERT SENT: {token_name} ({token_symbol})",
-                        flush=True
-                    )
-
-                    time.sleep(2)
+                time.sleep(2)
 
                 # =========================
-                # LIMIT ALERTS
+                # LIMIT
                 # =========================
 
-                if alert_count >= MAX_ALERTS_PER_SCAN:
+                if alert_count >= 5:
                     break
 
             except Exception as e:
-                print("❌ TOKEN ERROR:", e, flush=True)
 
-        print(
-            f"✅ SCAN COMPLETE | ALERTS: {alert_count}",
-            flush=True
+                logging.error(
+                    f"❌ Pair Error: {e}"
+                )
+
+        logging.info(
+            f"✅ Scan Complete | Alerts: "
+            f"{alert_count}"
         )
 
     except Exception as e:
-        print("❌ SCAN ERROR:", e, flush=True)
+
+        logging.error(
+            f"❌ Scan Error: {e}"
+        )
 
 # =========================
 # LOOP
 # =========================
 
-def scan_loop():
+def scanner_loop():
+
+    logging.info(
+        "⚡ Scanner Thread Started"
+    )
 
     time.sleep(5)
 
     while True:
 
-        try:
-            scan_tokens()
+        scan_pairs()
 
-        except Exception as e:
-            print("❌ LOOP ERROR:", e, flush=True)
-
-        print(
-            f"[WAITING {SCAN_INTERVAL} SECONDS]",
-            flush=True
+        logging.info(
+            f"⏳ Waiting "
+            f"{SCAN_INTERVAL} seconds..."
         )
 
         time.sleep(SCAN_INTERVAL)
 
 # =========================
-# ROUTES
-# =========================
-
-@app.route("/")
-def home():
-    return "Rocket Hunter Live 🚀"
-
-@app.route("/healthz")
-def health():
-
-    return jsonify({
-        "ok": True,
-        "tracked_tokens": len(seen_tokens)
-    })
-
-# =========================
-# START
+# MAIN
 # =========================
 
 if __name__ == "__main__":
 
-    print("🚀 ROCKET HUNTER STARTING...", flush=True)
+    logging.info(
+        "🚀 Rocket Hunter Starting..."
+    )
 
-    load_seen()
-
-    scan_worker = threading.Thread(
-        target=scan_loop,
+    scanner_worker = Thread(
+        target=scanner_loop,
         daemon=True
     )
 
-    scan_worker.start()
+    scanner_worker.start()
 
-    print("✅ SCANNER THREAD STARTED", flush=True)
+    logging.info(
+        "✅ Scanner Thread Running"
+    )
 
-    port = int(os.environ.get("PORT", 10000))
-
-    print(f"🌐 RUNNING ON PORT {port}", flush=True)
+    port = int(
+        os.getenv("PORT", 10000)
+    )
 
     app.run(
         host="0.0.0.0",
-        port=port,
-        debug=False
+        port=port
     )
