@@ -230,7 +230,7 @@ def scanner():
                     if liquidity_usd < 500:
                         continue
 
-                    if volume_usd < 1000:
+                    if volume_usd < 500:
                         continue
 
                     # =========================
