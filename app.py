@@ -227,10 +227,10 @@ def scanner():
                     # REAL FILTER
                     # =========================
 
-                    if liquidity_usd < 3000:
+                    if liquidity_usd < 500:
                         continue
 
-                    if volume_usd < 5000:
+                    if volume_usd < 1000:
                         continue
 
                     # =========================
