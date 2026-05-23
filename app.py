@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 
 # =========================================================
-# FLASK
+# FLASK APP
 # =========================================================
 
 app = Flask(__name__)
@@ -38,7 +38,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEX_URL = "https://api.geckoterminal.com/api/v2/networks/solana/new_pools"
 
 # =========================================================
-# MEMORY / DUPLICATE PROTECTION
+# MEMORY
 # =========================================================
 
 SENT_PAIRS = {}
@@ -46,7 +46,7 @@ SENT_PAIRS = {}
 COOLDOWN = 7200  # 2 HOURS
 
 # =========================================================
-# SCAM FILTER
+# BAD WORD FILTER
 # =========================================================
 
 BAD_WORDS = [
@@ -54,14 +54,18 @@ BAD_WORDS = [
     "SEX",
     "PORN",
     "XXX",
-    "TEST",
     "SCAM",
     "RUG",
+    "TEST",
+    "INUINU",
+    "CUM",
+    "BOOB",
+    "FUCK",
     "BANK"
 ]
 
 # =========================================================
-# TELEGRAM ALERT
+# SEND TELEGRAM ALERT
 # =========================================================
 
 def send_alert(
@@ -73,9 +77,9 @@ def send_alert(
     price_change
 ):
 
-    # =========================
-    # RISK LEVEL
-    # =========================
+    # =====================================
+    # RISK
+    # =====================================
 
     if liquidity > 50000 and volume > 20000:
         risk = "🟢 LOW RISK"
@@ -86,22 +90,22 @@ def send_alert(
     else:
         risk = "🔴 HIGH RISK"
 
-    # =========================
+    # =====================================
     # PRICE CHANGE ICON
-    # =========================
+    # =====================================
 
     change_icon = "📈" if price_change >= 0 else "📉"
 
-    # =========================
-    # CLEAN HTML
-    # =========================
+    # =====================================
+    # CLEAN TEXT
+    # =====================================
 
     clean_symbol = symbol.replace("<", "").replace(">", "")
     clean_name = name.replace("<", "").replace(">", "")
 
-    # =========================
+    # =====================================
     # MESSAGE
-    # =========================
+    # =====================================
 
     message = (
         f"🚀 <b>Rocket Hunter Alert</b>\n\n"
@@ -116,9 +120,9 @@ def send_alert(
         f"{risk}"
     )
 
-    # =========================
+    # =====================================
     # BUTTONS
-    # =========================
+    # =====================================
 
     keyboard = {
         "inline_keyboard": [[
@@ -133,9 +137,9 @@ def send_alert(
         ]]
     }
 
-    # =========================
-    # TELEGRAM API
-    # =========================
+    # =====================================
+    # TELEGRAM URL
+    # =====================================
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
@@ -158,13 +162,17 @@ def send_alert(
         logging.info(f"Telegram Status: {res.status_code}")
 
         if res.status_code == 200:
+
             logging.info(f"✅ ALERT SENT: {symbol}")
+
             return True
 
         else:
+
             logging.error(res.text)
 
     except Exception as e:
+
         logging.error(f"Telegram Error: {e}")
 
     return False
@@ -177,21 +185,21 @@ def scanner():
 
     logging.info("🚀 Rocket Hunter Started")
 
-    # =========================
+    # =====================================
     # ENV CHECK
-    # =========================
+    # =====================================
 
     if not TELEGRAM_BOT_TOKEN:
-        logging.error("❌ TELEGRAM_BOT_TOKEN missing")
+        logging.error("❌ TELEGRAM_BOT_TOKEN MISSING")
         return
 
     if not TELEGRAM_CHAT_ID:
-        logging.error("❌ TELEGRAM_CHAT_ID missing")
+        logging.error("❌ TELEGRAM_CHAT_ID MISSING")
         return
 
-    # =========================
+    # =====================================
     # LOOP
-    # =========================
+    # =====================================
 
     while True:
 
@@ -200,7 +208,7 @@ def scanner():
             now = time.time()
 
             # =====================================
-            # CLEAN OLD CACHE
+            # CACHE CLEANUP
             # =====================================
 
             expired = []
@@ -242,7 +250,7 @@ def scanner():
                 continue
 
             # =====================================
-            # BAD RESPONSE
+            # BAD STATUS
             # =====================================
 
             if response.status_code != 200:
@@ -254,7 +262,7 @@ def scanner():
                 continue
 
             # =====================================
-            # JSON
+            # JSON DATA
             # =====================================
 
             data = response.json()
@@ -277,9 +285,9 @@ def scanner():
 
                     pair_address = attr.get("address")
 
-                    # =================================
+                    # =====================================
                     # DUPLICATE PROTECTION
-                    # =================================
+                    # =====================================
 
                     if not pair_address:
                         continue
@@ -287,9 +295,9 @@ def scanner():
                     if pair_address in SENT_PAIRS:
                         continue
 
-                    # =================================
-                    # NAME
-                    # =================================
+                    # =====================================
+                    # POOL NAME
+                    # =====================================
 
                     pool_name = attr.get("name", "")
 
@@ -308,16 +316,16 @@ def scanner():
                         symbol = pool_name[:12]
                         base = "SOL"
 
-                    # =================================
+                    # =====================================
                     # EMPTY FIX
-                    # =================================
+                    # =====================================
 
                     if not symbol:
                         symbol = "UNKNOWN"
 
-                    # =================================
+                    # =====================================
                     # SKIP BASE TOKENS
-                    # =================================
+                    # =====================================
 
                     if symbol.lower() in [
                         "sol",
@@ -327,9 +335,9 @@ def scanner():
                     ]:
                         continue
 
-                    # =================================
-                    # SCAM FILTER
-                    # =================================
+                    # =====================================
+                    # BAD WORD FILTER
+                    # =====================================
 
                     if any(
                         word in symbol.upper()
@@ -337,13 +345,17 @@ def scanner():
                     ):
                         continue
 
-                    # =================================
-                    # METRICS
-                    # =================================
+                    # =====================================
+                    # LIQUIDITY
+                    # =====================================
 
                     liquidity = float(
                         attr.get("reserve_in_usd") or 0
                     )
+
+                    # =====================================
+                    # VOLUME
+                    # =====================================
 
                     volume_data = attr.get("volume_usd", {})
 
@@ -352,18 +364,20 @@ def scanner():
                     )
 
                     if volume == 0:
+
                         volume = float(
                             volume_data.get("h1") or 0
                         ) * 24
 
                     if volume == 0:
+
                         volume = float(
                             volume_data.get("m5") or 0
                         ) * 288
 
-                    # =================================
+                    # =====================================
                     # PRICE CHANGE
-                    # =================================
+                    # =====================================
 
                     change_data = attr.get(
                         "price_change_percentage",
@@ -377,9 +391,16 @@ def scanner():
                         or 0
                     )
 
-                    # =================================
+                    # =====================================
+                    # EARLY GARBAGE FILTER
+                    # =====================================
+
+                    if liquidity < 2000 and volume < 1000:
+                        continue
+
+                    # =====================================
                     # LOG
-                    # =================================
+                    # =====================================
 
                     logging.info(
                         f"💎 {symbol} | "
@@ -387,9 +408,9 @@ def scanner():
                         f"Vol ${volume:,.0f}"
                     )
 
-                    # =================================
-                    # FILTERS
-                    # =================================
+                    # =====================================
+                    # MAIN FILTERS
+                    # =====================================
 
                     if liquidity < 10000:
                         continue
@@ -397,9 +418,9 @@ def scanner():
                     if volume < 5000:
                         continue
 
-                    # =================================
+                    # =====================================
                     # SEND ALERT
-                    # =================================
+                    # =====================================
 
                     success = send_alert(
                         symbol=symbol,
@@ -410,9 +431,9 @@ def scanner():
                         price_change=price_change
                     )
 
-                    # =================================
+                    # =====================================
                     # SAVE CACHE
-                    # =================================
+                    # =====================================
 
                     if success:
 
@@ -422,9 +443,9 @@ def scanner():
 
                         time.sleep(3)
 
-                    # =================================
+                    # =====================================
                     # ALERT LIMIT
-                    # =================================
+                    # =====================================
 
                     if alerts >= 5:
                         break
