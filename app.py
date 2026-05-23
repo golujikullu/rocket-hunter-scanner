@@ -5,18 +5,18 @@ import requests
 from threading import Thread
 from flask import Flask
 
-# =========================
+# =========================================
 # LOGGING
-# =========================
+# =========================================
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# =========================
+# =========================================
 # FLASK
-# =========================
+# =========================================
 
 app = Flask(__name__)
 
@@ -24,61 +24,97 @@ app = Flask(__name__)
 def home():
     return "🚀 Rocket Hunter LIVE"
 
-# =========================
+# =========================================
 # TELEGRAM CONFIG
-# =========================
+# =========================================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# =========================
+# =========================================
 # API
-# =========================
+# =========================================
 
-DEXSCREENER_API_URL = (
-    "https://api.dexscreener.com/latest/dex/search?q=SOL"
-)
+DEX_API = "https://api.dexscreener.com/latest/dex/search?q=SOL"
 
-# =========================
+# =========================================
 # SETTINGS
-# =========================
+# =========================================
 
 SCAN_INTERVAL = 20
 
-# FIRST ALERT FILTERS
 MIN_LIQUIDITY = 500
 MIN_VOLUME = 100
 
-# =========================
-# DUPLICATE FILTER
-# =========================
-
-SENT_PAIRS = {}
-
 COOLDOWN_SECONDS = 7200
 
-# =========================
-# TELEGRAM FUNCTION
-# =========================
+# =========================================
+# MEMORY
+# =========================================
 
-def send_telegram_alert(
-    token_name,
-    token_symbol,
+SENT_ALERTS = {}
+
+# =========================================
+# TELEGRAM FUNCTION
+# =========================================
+
+def send_telegram(message):
+
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logging.error("❌ Telegram ENV missing")
+        return False
+
+    url = (
+        f"https://api.telegram.org/bot"
+        f"{TELEGRAM_BOT_TOKEN}/sendMessage"
+    )
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message
+    }
+
+    try:
+
+        response = requests.post(
+            url,
+            data=payload,
+            timeout=10
+        )
+
+        logging.info(
+            f"📩 Telegram Status: "
+            f"{response.status_code}"
+        )
+
+        return response.status_code == 200
+
+    except Exception as e:
+
+        logging.error(
+            f"❌ Telegram Error: {e}"
+        )
+
+        return False
+
+# =========================================
+# FORMAT ALERT
+# =========================================
+
+def build_message(
+    name,
+    symbol,
     liquidity,
     volume,
-    pair_address,
     price,
+    pair_address,
     dex_url
 ):
 
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        logging.error("❌ Telegram ENV variables missing")
-        return False
-
-    message = f"""
+    return f"""
 🚀 ROCKET HUNTER ALERT
 
-💎 Token: {token_name} ({token_symbol})
+💎 {name} ({symbol})
 
 💰 Price: ${price}
 
@@ -93,53 +129,24 @@ def send_telegram_alert(
 {dex_url}
 """
 
-    telegram_url = (
-        f"https://api.telegram.org/bot"
-        f"{TELEGRAM_BOT_TOKEN}/sendMessage"
-    )
-
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message
-    }
-
-    try:
-
-        response = requests.post(
-            telegram_url,
-            data=payload,
-            timeout=10
-        )
-
-        logging.info(
-            f"📩 TELEGRAM RESPONSE: {response.status_code}"
-        )
-
-        return response.status_code == 200
-
-    except Exception as e:
-
-        logging.error(f"❌ Telegram Error: {e}")
-
-        return False
-
-# =========================
+# =========================================
 # SCANNER
-# =========================
+# =========================================
 
 def scan_pairs():
 
-    logging.info("🔎 Scanning Solana pairs...")
+    logging.info("🔎 Scanning pairs...")
 
     try:
 
         response = requests.get(
-            DEXSCREENER_API_URL,
+            DEX_API,
             timeout=15
         )
 
         logging.info(
-            f"✅ API STATUS: {response.status_code}"
+            f"✅ API STATUS: "
+            f"{response.status_code}"
         )
 
         if response.status_code != 200:
@@ -149,53 +156,43 @@ def scan_pairs():
 
         pairs = data.get("pairs", [])
 
-        logging.info(f"📊 Pairs Found: {len(pairs)}")
+        logging.info(
+            f"📊 TOTAL PAIRS: "
+            f"{len(pairs)}"
+        )
 
         alerts_sent = 0
 
-        current_time = time.time()
+        now = time.time()
 
         for pair in pairs:
 
             try:
 
-                if pair.get("chainId") != "solana":
-                    continue
+                # =========================================
+                # DEBUG RAW
+                # =========================================
 
-                # =========================
-                # NEW PAIR FILTER
-                # =========================
-
-                pair_created = pair.get(
-                    "pairCreatedAt",
-                    0
+                logging.info(
+                    f"🧪 RAW SYMBOL: "
+                    f"{pair.get('baseToken', {}).get('symbol')}"
                 )
 
-                if pair_created:
-
-                    age_minutes = (
-                        (time.time() * 1000 - pair_created)
-                        / 60000
-                    )
-
-                    if age_minutes > 120:
-                        continue
-
-                # =========================
+                # =========================================
                 # TOKEN INFO
-                # =========================
+                # =========================================
 
-                base_token = pair.get(
+                base = pair.get(
                     "baseToken",
                     {}
                 )
 
-                token_name = base_token.get(
+                token_name = base.get(
                     "name",
                     ""
                 ).strip()
 
-                token_symbol = base_token.get(
+                token_symbol = base.get(
                     "symbol",
                     ""
                 ).strip()
@@ -210,9 +207,9 @@ def scan_pairs():
                     ""
                 )
 
-                # =========================
-                # JUNK FILTER
-                # =========================
+                # =========================================
+                # SKIP EMPTY
+                # =========================================
 
                 if not token_name:
                     continue
@@ -220,42 +217,69 @@ def scan_pairs():
                 if not token_symbol:
                     continue
 
-                if token_symbol.upper() in [
-                    "SOL",
-                    "WSOL",
-                    "USDC",
-                    "USDT",
-                    "WETH"
-                ]:
+                # =========================================
+                # SKIP BIG TOKENS
+                # =========================================
+
+                upper_symbol = token_symbol.upper()
+
+                if (
+                    "SOL" in upper_symbol
+                    or "USDC" in upper_symbol
+                    or "USDT" in upper_symbol
+                    or "WETH" in upper_symbol
+                    or "BTC" in upper_symbol
+                ):
                     continue
 
-                # =========================
-                # DUPLICATE FILTER
-                # =========================
+                # =========================================
+                # NEW PAIR FILTER
+                # =========================================
 
-                last_alert = SENT_PAIRS.get(
+                pair_created = pair.get(
+                    "pairCreatedAt",
+                    0
+                )
+
+                if pair_created:
+
+                    age_minutes = (
+                        (
+                            time.time() * 1000
+                            - pair_created
+                        ) / 60000
+                    )
+
+                    if age_minutes > 120:
+                        continue
+
+                # =========================================
+                # DUPLICATE FILTER
+                # =========================================
+
+                last_alert = SENT_ALERTS.get(
                     pair_address,
                     0
                 )
 
                 if (
-                    current_time - last_alert
+                    now - last_alert
                     < COOLDOWN_SECONDS
                 ):
                     continue
 
-                # =========================
+                # =========================================
                 # PRICE
-                # =========================
+                # =========================================
 
                 price = pair.get(
                     "priceUsd",
                     "0"
                 )
 
-                # =========================
+                # =========================================
                 # LIQUIDITY
-                # =========================
+                # =========================================
 
                 liquidity = float(
                     pair.get(
@@ -267,9 +291,9 @@ def scan_pairs():
                     )
                 )
 
-                # =========================
+                # =========================================
                 # VOLUME
-                # =========================
+                # =========================================
 
                 volume_data = pair.get(
                     "volume",
@@ -286,9 +310,9 @@ def scan_pairs():
 
                 volume = float(volume)
 
-                # =========================
-                # DEBUG
-                # =========================
+                # =========================================
+                # DEBUG VALUES
+                # =========================================
 
                 logging.info(
                     f"TOKEN {token_symbol} | "
@@ -296,9 +320,9 @@ def scan_pairs():
                     f"Vol ${volume:.2f}"
                 )
 
-                # =========================
+                # =========================================
                 # FILTERS
-                # =========================
+                # =========================================
 
                 if liquidity < MIN_LIQUIDITY:
                     continue
@@ -306,30 +330,32 @@ def scan_pairs():
                 if volume < MIN_VOLUME:
                     continue
 
-                # =========================
-                # ALERT FOUND
-                # =========================
+                # =========================================
+                # ALERT
+                # =========================================
 
                 logging.info(
                     f"🚨 ALERT FOUND: "
                     f"{token_symbol}"
                 )
 
-                success = send_telegram_alert(
+                message = build_message(
                     token_name,
                     token_symbol,
                     liquidity,
                     volume,
-                    pair_address,
                     price,
+                    pair_address,
                     dex_url
+                )
+
+                success = send_telegram(
+                    message
                 )
 
                 if success:
 
-                    SENT_PAIRS[pair_address] = (
-                        current_time
-                    )
+                    SENT_ALERTS[pair_address] = now
 
                     alerts_sent += 1
 
@@ -339,10 +365,6 @@ def scan_pairs():
                     )
 
                     time.sleep(2)
-
-                # =========================
-                # LIMIT
-                # =========================
 
                 if alerts_sent >= 5:
                     break
@@ -365,9 +387,9 @@ def scan_pairs():
             f"💥 Scanner Error: {e}"
         )
 
-# =========================
+# =========================================
 # LOOP
-# =========================
+# =========================================
 
 def scanner_loop():
 
@@ -386,9 +408,9 @@ def scanner_loop():
 
         time.sleep(SCAN_INTERVAL)
 
-# =========================
+# =========================================
 # MAIN
-# =========================
+# =========================================
 
 if __name__ == "__main__":
 
