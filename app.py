@@ -2,165 +2,159 @@ import os
 import time
 import requests
 import logging
-from flask import Flask
 from threading import Thread
-
-# =========================================
-# LOGGING
-# =========================================
+from flask import Flask
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
-
-# =========================================
-# FLASK
-# =========================================
 
 app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return "🚀 Rocket Hunter Gecko LIVE", 200
-
-# =========================================
-# TELEGRAM
-# =========================================
-
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-# =========================================
-# GECKOTERMINAL API
-# =========================================
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 DEX_URL = "https://api.geckoterminal.com/api/v2/networks/solana/new_pools"
 
-# =========================================
-# CACHE
-# =========================================
+SENT_PAIRS = {}
+COOLDOWN = 7200  # 2 hours
 
-SENT_PAIRS = set()
 
-# =========================================
-# TELEGRAM ALERT
-# =========================================
+@app.route('/')
+def home():
+    return "🚀 Rocket Hunter LIVE", 200
 
-def send_telegram_alert(
-    name,
-    symbol,
-    liquidity,
-    volume,
-    pair_address
-):
 
-    message = f"""
-🚀 Rocket Hunter Alert
+def send_alert(symbol, name, liquidity, volume, pair_address, price_change):
 
-💎 Token: {name} ({symbol})
+    if liquidity > 50000 and volume > 20000:
+        risk = "🟢 LOW RISK"
+    elif liquidity > 10000:
+        risk = "🟡 MEDIUM RISK"
+    else:
+        risk = "🔴 HIGH RISK"
 
-💰 Liquidity: ${liquidity:,.2f}
+    change_icon = "📈" if price_change >= 0 else "📉"
 
-📊 Volume 24h: ${volume:,.2f}
+    clean_symbol = symbol.replace("<", "&lt;").replace(">", "&gt;")
+    clean_name = name.replace("<", "&lt;").replace(">", "&gt;")
 
-🔗 Chart:
-https://www.geckoterminal.com/solana/pools/{pair_address}
-"""
+    message = (
+        f"🚀 <b>Rocket Hunter Alert</b>\n\n"
+        f"💎 <b>{clean_symbol}</b>\n"
+        f"📛 {clean_name}\n\n"
+        f"💧 Liquidity: ${liquidity:,.0f}\n"
+        f"📊 Volume: ${volume:,.0f}\n"
+        f"{change_icon} Change: {price_change:.1f}%\n\n"
+        f"{risk}\n\n"
+        f"📊 Dex:\n"
+        f"https://dexscreener.com/solana/{pair_address}\n\n"
+        f"🦎 Gecko:\n"
+        f"https://www.geckoterminal.com/solana/pools/{pair_address}"
+    )
 
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    inline_keyboard = {
+        "inline_keyboard": [[
+            {
+                "text": "📊 DexScreener",
+                "url": f"https://dexscreener.com/solana/{pair_address}"
+            },
+            {
+                "text": "🦎 GeckoTerminal",
+                "url": f"https://www.geckoterminal.com/solana/pools/{pair_address}"
+            }
+        ]]
+    }
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
     payload = {
-        "chat_id": CHAT_ID,
-        "text": message
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML",
+        "reply_markup": inline_keyboard,
+        "disable_web_page_preview": True
     }
 
     try:
+        res = requests.post(url, json=payload, timeout=10)
 
-        response = requests.post(
-            url,
-            json=payload,
-            timeout=10
-        )
+        logging.info(f"Telegram Status: {res.status_code}")
 
-        logging.info(
-            f"Telegram Status: {response.status_code}"
-        )
-
-        if response.status_code == 200:
-
-            logging.info(
-                f"✅ ALERT SENT: {symbol}"
-            )
-
+        if res.status_code == 200:
+            logging.info(f"✅ ALERT SENT: {symbol}")
             return True
-
         else:
-
-            logging.error(response.text)
-
-            return False
+            logging.error(f"Telegram Error: {res.text}")
 
     except Exception as e:
+        logging.error(f"Telegram Exception: {e}")
 
-        logging.error(
-            f"Telegram Error: {e}"
-        )
+    return False
 
-        return False
-
-# =========================================
-# SCANNER
-# =========================================
 
 def scanner():
 
-    logging.info("🚀 Gecko Scanner Started")
+    logging.info("🚀 Rocket Hunter Starting...")
+
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logging.error("❌ ENV VARIABLES MISSING!")
+        return
 
     while True:
 
         try:
 
-            logging.info(
-                f"Fetching: {DEX_URL}"
-            )
+            now = time.time()
 
-            response = requests.get(
+            # Cleanup old cooldown entries
+            expired = [
+                k for k, v in SENT_PAIRS.items()
+                if now - v > COOLDOWN
+            ]
+
+            for k in expired:
+                del SENT_PAIRS[k]
+
+            # Memory safety
+            if len(SENT_PAIRS) > 5000:
+                SENT_PAIRS.clear()
+
+            headers = {
+                "User-Agent": "Mozilla/5.0"
+            }
+
+            res = requests.get(
                 DEX_URL,
+                headers=headers,
                 timeout=15
             )
 
-            logging.info(
-                f"API STATUS: {response.status_code}"
-            )
+            logging.info(f"API STATUS: {res.status_code}")
 
-            if response.status_code != 200:
-
-                time.sleep(20)
+            if res.status_code == 429:
+                logging.warning("⚠️ Rate Limited. Waiting 90s...")
+                time.sleep(90)
                 continue
 
-            data = response.json()
+            if res.status_code != 200:
+                time.sleep(30)
+                continue
 
-            pairs = data.get("data", [])
+            pools = res.json().get("data", [])
 
-            logging.info(
-                f"Pools Found: {len(pairs)}"
-            )
+            logging.info(f"📊 Pools Found: {len(pools)}")
 
             alerts = 0
 
-            for pair in pairs:
+            for pool in pools:
 
                 try:
 
-                    attributes = pair.get(
-                        "attributes",
-                        {}
-                    )
+                    attr = pool.get("attributes", {})
 
-                    pair_address = attributes.get(
-                        "address"
-                    )
+                    pair_address = attr.get("address")
 
                     if not pair_address:
                         continue
@@ -168,115 +162,119 @@ def scanner():
                     if pair_address in SENT_PAIRS:
                         continue
 
-                    name = attributes.get(
-                        "name",
-                        "Unknown"
+                    pool_name = attr.get("name", "")
+
+                    parts = pool_name.replace(" / ", "/").split("/")
+
+                    symbol = (
+                        parts[0].strip().upper()
+                        if len(parts) > 0
+                        else "UNKNOWN"
                     )
 
-                    symbol = attributes.get(
-                        "symbol",
-                        "???"
+                    raw_name = (
+                        parts[1].strip()
+                        if len(parts) > 1
+                        else "SOL"
                     )
 
-                    liquidity_usd = float(
-                        attributes.get(
-                            "reserve_in_usd",
-                            0
-                        )
+                    if len(symbol) > 15:
+                        symbol = symbol[:15]
+
+                    if symbol.lower() in [
+                        "sol",
+                        "wsol",
+                        "usdc",
+                        "usdt"
+                    ]:
+                        continue
+
+                    name = pool_name if pool_name else "Unknown"
+
+                    liquidity = float(
+                        attr.get("reserve_in_usd") or 0
                     )
 
-                    volume_data = attributes.get(
-                        "volume_usd",
+                    vol_data = attr.get("volume_usd", {})
+
+                    volume = float(
+                        vol_data.get("h24") or 0
+                    )
+
+                    if volume == 0:
+                        volume = float(
+                            vol_data.get("h1") or 0
+                        ) * 24
+
+                    if volume == 0:
+                        volume = float(
+                            vol_data.get("m5") or 0
+                        ) * 288
+
+                    change_data = attr.get(
+                        "price_change_percentage",
                         {}
                     )
 
-                    volume_usd = float(
-                        volume_data.get(
-                            "h24",
-                            0
-                        )
+                    price_change = float(
+                        change_data.get("h24")
+                        or change_data.get("h1")
+                        or change_data.get("m5")
+                        or 0
                     )
 
                     logging.info(
                         f"💎 {symbol} | "
-                        f"Liq ${liquidity_usd} | "
-                        f"Vol ${volume_usd}"
+                        f"Liq ${liquidity:,.0f} | "
+                        f"Vol ${volume:,.0f}"
                     )
 
-                    # =========================================
-                    # REAL FILTER
-                    # =========================================
-
-                    if liquidity_usd < 5000:
+                    # FINAL FILTERS
+                    if liquidity < 7000:
                         continue
 
-                    if volume_usd < 3000:
+                    if liquidity > 5000000:
                         continue
 
-                    # =========================================
-                    # SEND ALERT
-                    # =========================================
+                    if volume < 1000:
+                        continue
 
-                    success = send_telegram_alert(
-                        name,
+                    success = send_alert(
                         symbol,
-                        liquidity_usd,
-                        volume_usd,
-                        pair_address
+                        name,
+                        liquidity,
+                        volume,
+                        pair_address,
+                        price_change
                     )
 
                     if success:
-
-                        SENT_PAIRS.add(
-                            pair_address
-                        )
-
+                        SENT_PAIRS[pair_address] = now
                         alerts += 1
 
-                        logging.info(
-                            f"🔥 ALERT COUNT: {alerts}"
-                        )
+                        time.sleep(3)
 
-                        time.sleep(2)
+                    if alerts >= 5:
+                        break
 
                 except Exception as e:
+                    logging.error(f"Pool Error: {e}")
 
-                    logging.error(
-                        f"Pair Error: {e}"
-                    )
-
-            logging.info(
-                f"✅ Scan Complete | Alerts: {alerts}"
-            )
+            logging.info(f"✅ Scan Complete | Alerts: {alerts}")
 
         except Exception as e:
+            logging.error(f"Scanner Error: {e}")
 
-            logging.error(
-                f"Scanner Crash: {e}"
-            )
+        logging.info("⏳ Waiting 60s...")
+        time.sleep(60)
 
-        logging.info(
-            "⏳ Waiting 20 seconds..."
-        )
-
-        time.sleep(20)
-
-# =========================================
-# MAIN
-# =========================================
 
 if __name__ == "__main__":
 
-    scanner_thread = Thread(
-        target=scanner,
-        daemon=True
-    )
+    t = Thread(target=scanner, daemon=True)
+    t.start()
 
-    scanner_thread.start()
-
-    port = int(
-        os.getenv("PORT", 10000)
-    )
+    port = int(os.getenv("PORT", 10000))
 
     app.run(
         host="0.0.0.0",
