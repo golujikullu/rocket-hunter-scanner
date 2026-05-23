@@ -34,7 +34,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # =========================================================
-# API URL
+# API
 # =========================================================
 
 DEX_URL = "https://api.geckoterminal.com/api/v2/networks/solana/new_pools"
@@ -43,7 +43,7 @@ DEX_URL = "https://api.geckoterminal.com/api/v2/networks/solana/new_pools"
 # MEMORY CACHE
 # =========================================================
 
-# mint address based tracking
+# mint based tracking
 SENT_TOKENS = {}
 
 # 30 minute cooldown
@@ -93,7 +93,7 @@ def send_alert(
         risk = "🔴 HIGH RISK"
 
     # =====================================================
-    # PRICE CHANGE ICON
+    # PRICE ICON
     # =====================================================
 
     change_icon = "📈" if price_change >= 0 else "📉"
@@ -269,7 +269,7 @@ def scanner():
             )
 
             # =============================================
-            # RATE LIMIT HANDLING
+            # RATE LIMIT
             # =============================================
 
             if res.status_code == 429:
@@ -396,7 +396,7 @@ def scanner():
                         )
 
                     # =====================================
-                    # SKIP BASE TOKENS
+                    # SKIP COMMON TOKENS
                     # =====================================
 
                     if symbol.lower() in [
@@ -427,7 +427,6 @@ def scanner():
                         base_token_data.get("id")
                     )
 
-                    # fallback
                     if mint_address in [
                         None,
                         "",
@@ -502,7 +501,7 @@ def scanner():
                     )
 
                     # =====================================
-                    # FILTERS
+                    # QUALITY FILTERS
                     # =====================================
 
                     if liquidity < 5000:
