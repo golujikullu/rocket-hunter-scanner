@@ -25,7 +25,7 @@ def home():
     return "🚀 Rocket Hunter LIVE"
 
 # =========================
-# TELEGRAM CONFIG
+# TELEGRAM
 # =========================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -46,6 +46,8 @@ SCAN_INTERVAL = 20
 MIN_LIQUIDITY = 500
 MIN_VOLUME = 100
 
+MAX_ALERTS_PER_SCAN = 5
+
 # =========================
 # DUPLICATE FILTER
 # =========================
@@ -62,11 +64,11 @@ def send_telegram(message):
 
     if not TELEGRAM_BOT_TOKEN:
         logging.error("❌ TELEGRAM_BOT_TOKEN missing")
-        return
+        return False
 
     if not TELEGRAM_CHAT_ID:
         logging.error("❌ TELEGRAM_CHAT_ID missing")
-        return
+        return False
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
@@ -85,9 +87,13 @@ def send_telegram(message):
 
         logging.info(f"📩 Telegram Status: {response.status_code}")
 
+        return response.status_code == 200
+
     except Exception as e:
 
         logging.error(f"❌ Telegram Error: {e}")
+
+        return False
 
 # =========================
 # SCANNER
@@ -142,7 +148,7 @@ def scan():
                 if not token_symbol:
                     continue
 
-                # skip major tokens
+                # skip main tokens
 
                 if token_symbol.upper() in [
                     "SOL",
@@ -160,7 +166,7 @@ def scan():
                 if not pair_address:
                     continue
 
-                # duplicate cooldown
+                # cooldown duplicate filter
 
                 last_seen = SENT_PAIRS.get(pair_address, 0)
 
@@ -189,7 +195,7 @@ def scan():
                 if volume < MIN_VOLUME:
                     continue
 
-                # mark as seen
+                # mark seen
 
                 SENT_PAIRS[pair_address] = now
 
@@ -212,22 +218,30 @@ def scan():
 🔗 {dex_url}
 """
 
-                send_telegram(message)
+                success = send_telegram(message)
 
-                logging.info(f"✅ ALERT SENT: {token_symbol}")
+                if success:
 
-                alerts_sent += 1
+                    logging.info(
+                        f"✅ ALERT SENT: {token_symbol}"
+                    )
+
+                    alerts_sent += 1
 
                 time.sleep(2)
 
-                if alerts_sent >= 5:
+                if alerts_sent >= MAX_ALERTS_PER_SCAN:
                     break
 
             except Exception as pair_error:
 
-                logging.error(f"❌ Pair Error: {pair_error}")
+                logging.error(
+                    f"❌ Pair Error: {pair_error}"
+                )
 
-        logging.info(f"✅ Scan Complete | Alerts: {alerts_sent}")
+        logging.info(
+            f"✅ Scan Complete | Alerts: {alerts_sent}"
+        )
 
     except Exception as e:
 
@@ -243,7 +257,9 @@ def scanner_loop():
 
         scan()
 
-        logging.info(f"⏳ Waiting {SCAN_INTERVAL} seconds...")
+        logging.info(
+            f"⏳ Waiting {SCAN_INTERVAL} seconds..."
+        )
 
         time.sleep(SCAN_INTERVAL)
 
