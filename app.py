@@ -1,67 +1,391 @@
 import os
 import time
-import requests
+import random
+import sqlite3
 import logging
+import threading
+import requests
+
+from flask import Flask, jsonify
 from threading import Thread
-from flask import Flask
 from datetime import datetime, timezone
+from contextlib import contextmanager
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# ==========================================
+# LOGGING
+# ==========================================
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
+# ==========================================
+# APP
+# ==========================================
+
 app = Flask(__name__)
+
+# ==========================================
+# ENV
+# ==========================================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# ==========================================
+# CONFIG
+# ==========================================
+
 DEX_URL = "https://api.geckoterminal.com/api/v2/networks/solana/new_pools"
 
-# =========================
-# ROCKET HUNTER CACHE
-# =========================
+COOLDOWN = int(os.getenv("COOLDOWN", "1800"))
+MAX_CACHE = int(os.getenv("MAX_CACHE", "5000"))
+MAX_ALERTS_PER_SCAN = int(os.getenv("MAX_ALERTS_PER_SCAN", "3"))
+SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "60"))
+
+MIN_GECKO_LIQ = float(os.getenv("MIN_GECKO_LIQ", "5000"))
+MIN_DEX_LIQ = float(os.getenv("MIN_DEX_LIQ", "1000"))
+MIN_VOLUME = float(os.getenv("MIN_VOLUME", "3000"))
+MAX_FDV = float(os.getenv("MAX_FDV", "25000000"))
+
+JOURNAL_DB = os.getenv("JOURNAL_DB", "rocket-hunter-journal.db")
+PORT = int(os.getenv("PORT", "10000"))
+
+# ==========================================
+# CACHE
+# ==========================================
+
 SENT_TOKENS = {}
 
-# 1 hour cooldown
-COOLDOWN = 3600
+CACHE_LOCK = threading.Lock()
+STATE_LOCK = threading.Lock()
 
+LAST_SCAN_STATS = {
+    "status": "booting",
+    "last_scan_at": None,
+    "last_alerts": 0,
+    "last_error": None,
+    "tracked_tokens": 0
+}
 
-@app.route('/')
+# ==========================================
+# HTTP SESSION
+# ==========================================
+
+def build_session():
+    s = requests.Session()
+
+    s.headers.update({
+        "User-Agent": "RocketHunterV2/1.0"
+    })
+
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=frozenset(["GET", "POST"]),
+        raise_on_status=False,
+    )
+
+    adapter = HTTPAdapter(
+        max_retries=retry,
+        pool_connections=20,
+        pool_maxsize=20
+    )
+
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+
+    return s
+
+session = build_session()
+
+# ==========================================
+# ROUTES
+# ==========================================
+
+@app.route("/")
 def home():
-    return "🚀 Rocket Hunter LIVE", 200
+    return "🚀 Rocket Hunter V2 — Alpha Shield LIVE", 200
 
+@app.route("/healthz")
+def healthz():
+    with STATE_LOCK:
+        return jsonify(LAST_SCAN_STATS), 200
 
-# =========================
-# ENTRY LABELS
-# =========================
+@app.route("/stats")
+def stats():
+    with journal_db() as conn:
+        cur = conn.cursor()
+
+        cur.execute("SELECT COUNT(*) FROM alerts")
+        total = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM alerts WHERE alert_sent = 1")
+        sent = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM alerts WHERE label = 'blocked'")
+        blocked = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM alerts WHERE label = 'rejected'")
+        rejected = cur.fetchone()[0]
+
+    return jsonify({
+        "total_logged": total,
+        "sent": sent,
+        "blocked": blocked,
+        "rejected": rejected
+    }), 200
+
+@app.route("/recent")
+def recent():
+    with journal_db() as conn:
+        conn.row_factory = sqlite3.Row
+
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT mint,
+                   symbol,
+                   timestamp,
+                   liquidity,
+                   volume,
+                   price_change,
+                   entry_label,
+                   shield_result,
+                   alert_sent,
+                   label
+            FROM alerts
+            ORDER BY id DESC
+            LIMIT 20
+        """)
+
+        rows = [dict(r) for r in cur.fetchall()]
+
+    return jsonify(rows), 200
+
+# ==========================================
+# HELPERS
+# ==========================================
+
 def get_entry_label(age_hours):
-
     if age_hours <= 1:
         return "⚡ ULTRA EARLY"
 
-    elif age_hours <= 6:
+    if age_hours <= 6:
         return "🟢 EARLY"
 
-    elif age_hours <= 24:
+    if age_hours <= 24:
         return "🟡 LATE ENTRY"
 
     return None
 
+def normalize_mint(token_id):
+    if not token_id:
+        return None
 
-# =========================
+    raw = token_id.split("_", 1)[1] if token_id.startswith("solana_") else token_id
+    raw = raw.strip()
+
+    allowed = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+
+    if len(raw) < 32 or len(raw) > 48:
+        return None
+
+    if any(ch not in allowed for ch in raw):
+        return None
+
+    return raw
+
+# ==========================================
+# SQLITE
+# ==========================================
+
+def init_journal_db():
+    conn = sqlite3.connect(JOURNAL_DB, timeout=30)
+
+    cur = conn.cursor()
+
+    cur.execute("PRAGMA journal_mode=WAL;")
+    cur.execute("PRAGMA synchronous=NORMAL;")
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mint TEXT,
+            symbol TEXT,
+            timestamp TEXT,
+            liquidity REAL,
+            volume REAL,
+            price_change REAL,
+            age_hours REAL,
+            entry_label TEXT,
+            buys INTEGER,
+            sells INTEGER,
+            buyers INTEGER,
+            suspicious INTEGER,
+            fdv REAL,
+            shield_result TEXT,
+            alert_sent INTEGER,
+            label TEXT
+        )
+    """)
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_alerts_mint ON alerts(mint)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)")
+
+    conn.commit()
+    conn.close()
+
+@contextmanager
+def journal_db():
+    conn = sqlite3.connect(JOURNAL_DB, timeout=30)
+
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+
+        yield conn
+
+    finally:
+        conn.close()
+
+# ==========================================
+# CACHE CLEANUP
+# ==========================================
+
+def cleanup_cache(now_ts):
+    with CACHE_LOCK:
+
+        expired = [
+            k for k, v in SENT_TOKENS.items()
+            if now_ts - v > COOLDOWN
+        ]
+
+        for k in expired:
+            SENT_TOKENS.pop(k, None)
+
+        if len(SENT_TOKENS) > MAX_CACHE:
+
+            overflow = len(SENT_TOKENS) - MAX_CACHE
+
+            oldest = sorted(
+                SENT_TOKENS.items(),
+                key=lambda x: x[1]
+            )[:overflow]
+
+            for k, _ in oldest:
+                SENT_TOKENS.pop(k, None)
+
+            logging.info("🧹 Cache trimmed")
+
+        with STATE_LOCK:
+            LAST_SCAN_STATS["tracked_tokens"] = len(SENT_TOKENS)
+
+# ==========================================
+# TELEGRAM BACKOFF
+# ==========================================
+
+def tg_backoff_sleep(resp_json):
+    params = resp_json.get("parameters", {}) if isinstance(resp_json, dict) else {}
+
+    retry_after = params.get("retry_after")
+
+    wait_s = int(retry_after) + 1 if retry_after else 5
+
+    logging.warning(f"Telegram 429 hit, sleeping {wait_s}s")
+
+    time.sleep(wait_s)
+
+# ==========================================
+# DEXSCREENER VERIFY
+# ==========================================
+
+def verify_on_dexscreener(mint_address):
+
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{mint_address}"
+
+        time.sleep(0.25)
+
+        res = session.get(url, timeout=10)
+
+        if res.status_code == 429:
+            logging.warning("DexScreener 429 rate limit")
+            return 0, None, None
+
+        if res.status_code != 200:
+            return 0, None, None
+
+        pairs = res.json().get("pairs", [])
+
+        solana_pairs = [
+            p for p in pairs
+            if p.get("chainId") == "solana"
+        ]
+
+        if not solana_pairs:
+            return 0, None, None
+
+        best = max(
+            solana_pairs,
+            key=lambda x: float(x.get("liquidity", {}).get("usd") or 0)
+        )
+
+        real_liq = float(best.get("liquidity", {}).get("usd") or 0)
+
+        dex_url = best.get("url")
+        price_usd = best.get("priceUsd")
+
+        return real_liq, dex_url, price_usd
+
+    except Exception as e:
+        logging.error(f"DexScreener verify error: {e}")
+        return 0, None, None
+
+# ==========================================
+# ALPHA SHIELD V2
+# ==========================================
+
+def alpha_shield_v2(fdv, liquidity, buys, sells, buyers, suspicious_reports=0):
+
+    if liquidity < 3000:
+        return False, "LOW_REAL_LIQUIDITY"
+
+    if fdv and fdv > MAX_FDV:
+        return False, "OVERPUMPED_FAKE_MC"
+
+    if buys <= 0 or buyers <= 0:
+        return False, "NO_REAL_BUY_ACTIVITY"
+
+    if sells == 0 and buys > 25:
+        return False, "ONE_SIDED_FLOW"
+
+    if suspicious_reports and suspicious_reports > 0:
+        return False, "COMMUNITY_FLAGGED"
+
+    return True, "SURVIVABLE_ALPHA"
+
+# ==========================================
 # TELEGRAM ALERT
-# =========================
+# ==========================================
+
 def send_alert(
     symbol,
     liquidity,
     volume,
-    pair_address,
+    dex_url,
+    gecko_url,
     price_change,
-    entry_label
+    entry_label,
+    mint_address
 ):
 
-    # Risk Engine
     if liquidity > 50000 and volume > 20000:
         risk = "🛡️ LOW RISK"
 
@@ -73,158 +397,225 @@ def send_alert(
 
     change_icon = "📈" if price_change >= 0 else "📉"
 
-    clean_symbol = (
-        symbol
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+    clean_symbol = symbol.replace("<", "&lt;").replace(">", "&gt;")
+
+    short_mint = f"{mint_address[:6]}...{mint_address[-6:]}"
 
     message = (
         f"🚀 <b>Rocket Hunter Alert</b>\n\n"
-
-        f"⚡ {entry_label}\n\n"
-
-        f"💎 <b>{clean_symbol} / SOL</b>\n\n"
-
+        f"{entry_label}\n\n"
+        f"💎 <b>{clean_symbol} / SOL</b>\n"
+        f"🪪 Mint: <code>{short_mint}</code>\n\n"
         f"💧 Liquidity: ${liquidity:,.0f}\n"
         f"📊 Volume: ${volume:,.0f}\n"
         f"{change_icon} Change: {price_change:.1f}%\n\n"
-
-        f"{risk}"
+        f"{risk}\n"
+        f"🛡️ Alpha Shield V2 Active\n"
+        f"✅ <i>Verified on DexScreener</i>"
     )
 
-    inline_keyboard = {
-        "inline_keyboard": [[
-            {
-                "text": "📊 DexScreener",
-                "url": f"https://dexscreener.com/solana/{pair_address}"
-            },
-            {
-                "text": "🦎 GeckoTerminal",
-                "url": f"https://www.geckoterminal.com/solana/pools/{pair_address}"
-            }
-        ]]
-    }
+    buttons = []
 
-    url = (
-        f"https://api.telegram.org/bot"
-        f"{TELEGRAM_BOT_TOKEN}/sendMessage"
-    )
+    if dex_url:
+        buttons.append({
+            "text": "📊 DexScreener",
+            "url": dex_url
+        })
+
+    if gecko_url:
+        buttons.append({
+            "text": "🦎 GeckoTerminal",
+            "url": gecko_url
+        })
 
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
         "parse_mode": "HTML",
-        "reply_markup": inline_keyboard,
-        "disable_web_page_preview": True
+        "disable_web_page_preview": True,
     }
 
-    try:
+    if buttons:
+        payload["reply_markup"] = {
+            "inline_keyboard": [buttons]
+        }
 
-        res = requests.post(
-            url,
-            json=payload,
-            timeout=10
-        )
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
-        if res.status_code == 200:
-            logging.info(
-                f"✅ ALERT SENT: {symbol} | {entry_label}"
-            )
-            return True
+    for _ in range(3):
 
-        else:
-            logging.error(
-                f"Telegram Error: {res.text}"
-            )
+        try:
+            res = session.post(url, json=payload, timeout=10)
 
-    except Exception as e:
-        logging.error(
-            f"Telegram Exception: {e}"
-        )
+            if res.status_code == 200:
+                logging.info(f"✅ ALERT: {symbol} | {entry_label}")
+                return True
+
+            try:
+                body = res.json()
+            except Exception:
+                body = {}
+
+            if res.status_code == 429:
+                tg_backoff_sleep(body)
+                continue
+
+            logging.error(f"Telegram Error: {res.text}")
+            return False
+
+        except Exception as e:
+            logging.error(f"Telegram Exception: {e}")
+            time.sleep(2)
 
     return False
 
+# ==========================================
+# SQLITE LOGGING
+# ==========================================
 
-# =========================
+def log_alert(
+    mint,
+    symbol,
+    ts,
+    liquidity,
+    volume,
+    price_change,
+    age_hours,
+    entry_label,
+    buys,
+    sells,
+    buyers,
+    suspicious,
+    fdv,
+    shield_result,
+    alert_sent,
+    label
+):
+
+    with journal_db() as conn:
+
+        conn.execute("""
+            INSERT INTO alerts (
+                mint,
+                symbol,
+                timestamp,
+                liquidity,
+                volume,
+                price_change,
+                age_hours,
+                entry_label,
+                buys,
+                sells,
+                buyers,
+                suspicious,
+                fdv,
+                shield_result,
+                alert_sent,
+                label
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            mint,
+            symbol,
+            ts,
+            liquidity,
+            volume,
+            price_change,
+            age_hours,
+            entry_label,
+            buys,
+            sells,
+            buyers,
+            suspicious,
+            fdv,
+            shield_result,
+            1 if alert_sent else 0,
+            label or "pending"
+        ))
+
+        conn.commit()
+
+# ==========================================
+# STATE
+# ==========================================
+
+def set_scan_state(status=None, last_alerts=None, last_error=None):
+
+    with STATE_LOCK:
+
+        if status is not None:
+            LAST_SCAN_STATS["status"] = status
+
+        if last_alerts is not None:
+            LAST_SCAN_STATS["last_alerts"] = last_alerts
+
+        if last_error is not None:
+            LAST_SCAN_STATS["last_error"] = last_error
+
+        LAST_SCAN_STATS["last_scan_at"] = datetime.now(timezone.utc).isoformat()
+
+# ==========================================
 # MAIN SCANNER
-# =========================
+# ==========================================
+
 def scanner():
 
-    logging.info("🚀 Rocket Hunter Starting...")
+    init_journal_db()
+
+    logging.info("🚀 Rocket Hunter V2 — Alpha Shield Starting...")
 
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logging.error("❌ ENV VARIABLES MISSING!")
+
+        set_scan_state(
+            status="env_error",
+            last_error="Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID"
+        )
+
         return
 
     while True:
 
+        alerts = 0
+
         try:
 
-            now = time.time()
-
+            now_ts = time.time()
             now_utc = datetime.now(timezone.utc)
 
-            # =========================
-            # CLEAN EXPIRED CACHE
-            # =========================
-            expired = [
-                k for k, v in SENT_TOKENS.items()
-                if now - v > COOLDOWN
-            ]
+            cleanup_cache(now_ts)
 
-            for k in expired:
-                del SENT_TOKENS[k]
+            res = session.get(DEX_URL, timeout=15)
 
-            # =========================
-            # MEMORY SAFETY
-            # =========================
-            if len(SENT_TOKENS) > 5000:
-                SENT_TOKENS.clear()
-                logging.info("🧹 Cache flushed")
+            logging.info(f"API STATUS: {res.status_code}")
 
-            headers = {
-                "User-Agent": "Mozilla/5.0"
-            }
-
-            res = requests.get(
-                DEX_URL,
-                headers=headers,
-                timeout=15
-            )
-
-            logging.info(
-                f"📡 API STATUS: {res.status_code}"
-            )
-
-            # =========================
-            # RATE LIMIT
-            # =========================
             if res.status_code == 429:
 
-                logging.warning(
-                    "⚠️ Rate limited! Waiting 90s..."
+                wait_s = 90 + random.randint(0, 20)
+
+                logging.warning(f"Rate limited! Waiting {wait_s}s...")
+
+                set_scan_state(
+                    status="rate_limited",
+                    last_alerts=0,
+                    last_error="GeckoTerminal 429"
                 )
 
-                time.sleep(90)
+                time.sleep(wait_s)
                 continue
 
-            elif res.status_code != 200:
+            if res.status_code != 200:
 
-                logging.warning(
-                    "⚠️ API Error! Waiting 30s..."
+                set_scan_state(
+                    status="api_error",
+                    last_alerts=0,
+                    last_error=f"GeckoTerminal status {res.status_code}"
                 )
 
                 time.sleep(30)
                 continue
 
             pools = res.json().get("data", [])
-
-            logging.info(
-                f"📊 Pools Found: {len(pools)}"
-            )
-
-            alerts = 0
 
             for pool in pools:
 
@@ -237,13 +628,7 @@ def scanner():
                     if not pair_address:
                         continue
 
-                    # =========================
-                    # POOL AGE
-                    # =========================
-                    created_at = attr.get(
-                        "pool_created_at",
-                        ""
-                    )
+                    created_at = attr.get("pool_created_at")
 
                     if not created_at:
                         continue
@@ -258,104 +643,61 @@ def scanner():
 
                     entry_label = get_entry_label(age_hours)
 
-                    if entry_label is None:
+                    if not entry_label:
                         continue
 
-                    # =========================
-                    # SYMBOL
-                    # =========================
                     pool_name = attr.get("name", "")
 
-                    if " / " in pool_name:
-                        symbol = (
-                            pool_name
-                            .split(" / ")[0]
-                            .strip()
-                        )
+                    symbol = (
+                        pool_name.split("/")[0].replace(" ", "").strip()
+                        if "/" in pool_name
+                        else (pool_name[:10] or "Unknown")
+                    )
 
-                    elif "/" in pool_name:
-                        symbol = (
-                            pool_name
-                            .split("/")[0]
-                            .strip()
-                        )
-
-                    else:
-                        symbol = (
-                            pool_name[:12]
-                            if pool_name
-                            else "Unknown"
-                        )
-
-                    if symbol.lower() in [
+                    if symbol.lower() in {
                         "sol",
                         "wsol",
                         "usdc",
                         "usdt",
                         "unknown"
-                    ]:
+                    }:
                         continue
 
-                    # =========================
-                    # DUPLICATE SHIELD
-                    # =========================
-
-                    # Strong symbol lock
-                    token_key = symbol.upper()
-
-                    last_sent = SENT_TOKENS.get(
-                        token_key,
-                        0
+                    mint_id = (
+                        pool.get("relationships", {})
+                        .get("base_token", {})
+                        .get("data", {})
+                        .get("id")
                     )
 
-                    if now - last_sent < COOLDOWN:
+                    mint_address = normalize_mint(mint_id)
 
-                        logging.info(
-                            f"⏭️ Duplicate skipped: {symbol}"
-                        )
-
+                    if not mint_address:
                         continue
 
-                    # =========================
-                    # LIQUIDITY
-                    # =========================
-                    liquidity = float(
-                        attr.get("reserve_in_usd") or 0
+                    with CACHE_LOCK:
+
+                        if now_ts - SENT_TOKENS.get(mint_address, 0) < COOLDOWN:
+                            logging.info(f"⏭️ Duplicate skip: {symbol}")
+                            continue
+
+                    gecko_liq = float(attr.get("reserve_in_usd") or 0)
+
+                    if gecko_liq < MIN_GECKO_LIQ:
+                        continue
+
+                    vol_data = attr.get("volume_usd", {})
+
+                    volume = (
+                        float(vol_data.get("h24") or 0)
+                        or float(vol_data.get("h1") or 0) * 24
+                        or float(vol_data.get("m5") or 0) * 288
                     )
 
-                    # =========================
-                    # VOLUME
-                    # =========================
-                    vol_data = attr.get(
-                        "volume_usd",
-                        {}
-                    )
+                    if volume < MIN_VOLUME:
+                        continue
 
-                    volume = float(
-                        vol_data.get("h24") or 0
-                    )
-
-                    if volume == 0:
-                        volume = (
-                            float(
-                                vol_data.get("h1") or 0
-                            ) * 24
-                        )
-
-                    if volume == 0:
-                        volume = (
-                            float(
-                                vol_data.get("m5") or 0
-                            ) * 288
-                        )
-
-                    # =========================
-                    # PRICE CHANGE
-                    # =========================
-                    change_data = attr.get(
-                        "price_change_percentage",
-                        {}
-                    )
+                    change_data = attr.get("price_change_percentage", {})
 
                     price_change = float(
                         change_data.get("h24")
@@ -364,84 +706,167 @@ def scanner():
                         or 0
                     )
 
-                    logging.info(
-                        f"💎 {symbol} | "
-                        f"Age:{age_hours:.1f}h | "
-                        f"Liq:${liquidity:,.0f} | "
-                        f"Vol:${volume:,.0f}"
+                    tx = attr.get("transactions", {})
+
+                    txh1 = tx.get("h1") or tx.get("m15") or {}
+
+                    buys = int(txh1.get("buys") or 0)
+                    sells = int(txh1.get("sells") or 0)
+                    buyers = int(txh1.get("buyers") or 0)
+
+                    suspicious = int(
+                        attr.get("community_sus_report") or 0
                     )
 
-                    # =========================
-                    # FILTERS
-                    # =========================
-                    if liquidity < 5000:
+                    fdv = float(
+                        attr.get("fdv_usd")
+                        or attr.get("fully_diluted_valuation")
+                        or 0
+                    )
+
+                    real_liq, dex_url, _price_usd = verify_on_dexscreener(
+                        mint_address
+                    )
+
+                    if real_liq < MIN_DEX_LIQ:
+
+                        log_alert(
+                            mint_address,
+                            symbol,
+                            datetime.utcnow().isoformat(),
+                            gecko_liq,
+                            volume,
+                            price_change,
+                            age_hours,
+                            entry_label,
+                            buys,
+                            sells,
+                            buyers,
+                            suspicious,
+                            fdv,
+                            "LOW_DEX_LIQUIDITY",
+                            False,
+                            "rejected"
+                        )
+
                         continue
 
-                    if volume < 3000:
+                    passed, shield_reason = alpha_shield_v2(
+                        fdv,
+                        real_liq,
+                        buys,
+                        sells,
+                        buyers,
+                        suspicious
+                    )
+
+                    if not passed:
+
+                        log_alert(
+                            mint_address,
+                            symbol,
+                            datetime.utcnow().isoformat(),
+                            gecko_liq,
+                            volume,
+                            price_change,
+                            age_hours,
+                            entry_label,
+                            buys,
+                            sells,
+                            buyers,
+                            suspicious,
+                            fdv,
+                            shield_reason,
+                            False,
+                            "blocked"
+                        )
+
+                        logging.info(
+                            f"🚫 SHIELD BLOCKED: {symbol} | {shield_reason}"
+                        )
+
                         continue
 
-                    # =========================
-                    # SEND ALERT
-                    # =========================
+                    gecko_url = (
+                        f"https://www.geckoterminal.com/solana/pools/{pair_address}"
+                    )
+
                     success = send_alert(
                         symbol,
-                        liquidity,
+                        real_liq,
                         volume,
-                        pair_address,
+                        dex_url,
+                        gecko_url,
                         price_change,
-                        entry_label
+                        entry_label,
+                        mint_address
                     )
 
                     if success:
 
-                        SENT_TOKENS[token_key] = now
+                        with CACHE_LOCK:
+                            SENT_TOKENS[mint_address] = now_ts
+
+                        log_alert(
+                            mint_address,
+                            symbol,
+                            datetime.utcnow().isoformat(),
+                            gecko_liq,
+                            volume,
+                            price_change,
+                            age_hours,
+                            entry_label,
+                            buys,
+                            sells,
+                            buyers,
+                            suspicious,
+                            fdv,
+                            "SURVIVABLE",
+                            True,
+                            "sent"
+                        )
 
                         alerts += 1
 
                         time.sleep(3)
 
-                    # Limit alerts per cycle
-                    if alerts >= 3:
+                    if alerts >= MAX_ALERTS_PER_SCAN:
                         break
 
                 except Exception as e:
+                    logging.error(f"Pool Error: {e}")
 
-                    logging.error(
-                        f"Pool Error: {e}"
-                    )
+            logging.info(f"✅ Done | Alerts: {alerts}")
 
-            logging.info(
-                f"✅ Scan Complete | Alerts: {alerts}"
+            set_scan_state(
+                status="running",
+                last_alerts=alerts,
+                last_error=None
             )
 
         except Exception as e:
 
-            logging.error(
-                f"Scanner Error: {e}"
+            logging.error(f"Scanner Error: {e}")
+
+            set_scan_state(
+                status="scanner_error",
+                last_alerts=alerts,
+                last_error=str(e)
             )
 
-        logging.info("⏳ Waiting 60s...")
+        logging.info(f"⏳ Waiting {SCAN_INTERVAL}s...")
 
-        time.sleep(60)
+        time.sleep(SCAN_INTERVAL)
 
-
-# =========================
+# ==========================================
 # START ENGINE
-# =========================
+# ==========================================
+
 if __name__ == "__main__":
 
-    t = Thread(
-        target=scanner,
-        daemon=True
-    )
-
-    t.start()
-
-    port = int(
-        os.getenv("PORT", 10000)
-    )
+    Thread(target=scanner, daemon=True).start()
 
     app.run(
         host="0.0.0.0",
-        port=port
+        port=PORT
     )
