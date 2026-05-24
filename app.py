@@ -12,7 +12,39 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+# ========================================================
+# ALPHA SHIELD V3 - PRODUCTION PREDICTIVE LAYER
+# ========================================================
 
+BASE_TICKERS = {"SOL", "WSOL", "USDC", "USDT", "USDC.SOL", "USDT.SOL"}
+
+def run_alpha_shield_v3(pair_data, now_ts):
+
+    base_token = pair_data.get("baseToken", {})
+    token_symbol = str(base_token.get("symbol") or "???").strip()
+    token_id = str(base_token.get("address") or "").strip()
+
+    if token_symbol.upper() in BASE_TICKERS or not token_id:
+        return False, "BASE_ASSET_SKIP", 0, 0
+
+    liquidity = float(pair_data.get("liquidity", {}).get("usd") or 0)
+    volume_5m = float(pair_data.get("volume", {}).get("m5") or 0)
+
+    if liquidity < 3000:
+        return False, "LOW_LIQUIDITY_SKIP", 0, 0
+
+    pair_created_at = float(pair_data.get("pairCreatedAt") or 0) / 1000.0
+    pool_age_seconds = now_ts - pair_created_at if pair_created_at > 0 else 99999
+
+    if pool_age_seconds > 900:
+        return False, "STALE_POOL_SKIP", pool_age_seconds, 0
+
+    conviction_score = 50
+
+    if pool_age_seconds <= 180:
+
+# ========================================================
+# ALPHA SHIELD V3 - PRODUCTION PREDICTIVE LAYER
 # ==========================================
 # LOGGING
 # ==========================================
