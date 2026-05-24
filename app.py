@@ -42,7 +42,7 @@ def run_alpha_shield_v3(pair_data, now_ts):
     conviction_score = 50
 
     if pool_age_seconds <= 180:
-
+         conviction_score += 20        
 # ========================================================
 # ALPHA SHIELD V3 - PRODUCTION PREDICTIVE LAYER
 # ==========================================
