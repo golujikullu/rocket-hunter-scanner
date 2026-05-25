@@ -554,10 +554,11 @@ def log_alert(
                 suspicious,
                 fdv,
              shield_result,
-   alert_sent,
-     label,
-     conviction_score
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+alert_sent,
+label,
+conviction_score
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             mint,
             symbol,
