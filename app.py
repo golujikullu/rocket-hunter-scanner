@@ -264,7 +264,8 @@ def init_journal_db():
             fdv REAL,
             shield_result TEXT,
             alert_sent INTEGER,
-            label TEXT
+            label TEXT,
+conviction_score INTEGER DEFAULT 0
         )
     """)
 
@@ -530,8 +531,10 @@ def log_alert(
     fdv,
     shield_result,
     alert_sent,
-    label
+        label,
+     conviction_score=0
 ):
+
 
     with journal_db() as conn:
 
@@ -550,11 +553,11 @@ def log_alert(
                 buyers,
                 suspicious,
                 fdv,
-                shield_result,
-                alert_sent,
-                label
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             shield_result,
+   alert_sent,
+     label,
+     conviction_score
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             mint,
             symbol,
@@ -570,9 +573,10 @@ def log_alert(
             suspicious,
             fdv,
             shield_result,
-            1 if alert_sent else 0,
-            label or "pending"
-        ))
+1 if alert_sent else 0,
+label or "pending",
+conviction_score
+))
 
         conn.commit()
 
