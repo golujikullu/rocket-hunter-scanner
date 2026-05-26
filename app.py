@@ -17,53 +17,117 @@ from urllib3.util.retry import Retry
 # ========================================================
 
 BASE_TICKERS = {"SOL", "WSOL", "USDC", "USDT", "USDC.SOL", "USDT.SOL"}
+ 
+# ========================================================
+# ALPHA SHIELD V3 — EXPLAINABLE CONVICTION ENGINE
+# FULL REPLACEMENT FUNCTION
+# ========================================================
+
+BASE_TICKERS = {"SOL", "WSOL", "USDC", "USDT", "USDC.SOL", "USDT.SOL"}
 
 def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
 
     base_token = pair_data.get("baseToken", {})
-    token_symbol = str(base_token.get("symbol") or "???").strip()
-    token_id = str(base_token.get("address") or "").strip()
+
+    token_symbol = str(
+        base_token.get("symbol") or "???"
+    ).strip()
+
+    token_id = str(
+        base_token.get("address") or ""
+    ).strip()
 
     if token_symbol.upper() in BASE_TICKERS or not token_id:
         return False, "BASE_ASSET_SKIP", 0, 0
 
-    liquidity = float(pair_data.get("liquidity", {}).get("usd") or 0)
-    volume_5m = float(pair_data.get("volume", {}).get("m5") or 0)
+    liquidity = float(
+        pair_data.get("liquidity", {}).get("usd") or 0
+    )
+
+    volume_5m = float(
+        pair_data.get("volume", {}).get("m5") or 0
+    )
 
     if liquidity < 3000:
         return False, "LOW_LIQUIDITY_SKIP", 0, 0
 
-    pair_created_at = float(pair_data.get("pairCreatedAt") or 0) / 1000.0
-    pool_age_seconds = now_ts - pair_created_at if pair_created_at > 0 else 99999
+    pair_created_at = float(
+        pair_data.get("pairCreatedAt") or 0
+    ) / 1000.0
+
+    pool_age_seconds = (
+        now_ts - pair_created_at
+        if pair_created_at > 0
+        else 99999
+    )
 
     if pool_age_seconds > 900:
         return False, "STALE_POOL_SKIP", pool_age_seconds, 0
 
-    # PIRANHA MODE — score 0 se shuru, earn karo
+    # ========================================================
+    # CONVICTION ENGINE
+    # ========================================================
+
     conviction_score = 0
+
+    reasons = []
+    penalties = []
+
+    # ========================================================
+    # POOL AGE
+    # ========================================================
 
     if pool_age_seconds <= 180:
         conviction_score += 20
+        reasons.append("fresh_pool")
+
     elif pool_age_seconds <= 420:
         conviction_score += 10
+        reasons.append("moderately_fresh_pool")
+
     elif pool_age_seconds <= 900:
         conviction_score += 5
+        reasons.append("older_pool")
+
+    # ========================================================
+    # LIQUIDITY
+    # ========================================================
 
     if liquidity >= 20000:
         conviction_score += 15
+        reasons.append("strong_liquidity")
+
     elif liquidity >= 10000:
         conviction_score += 10
+        reasons.append("healthy_liquidity")
+
     elif liquidity >= 5000:
         conviction_score += 5
+        reasons.append("acceptable_liquidity")
+
+    # ========================================================
+    # VOLUME
+    # ========================================================
 
     if volume_5m >= 50000:
         conviction_score += 20
+        reasons.append("strong_volume")
+
     elif volume_5m >= 20000:
         conviction_score += 15
+        reasons.append("healthy_volume")
+
     elif volume_5m >= 8000:
         conviction_score += 10
+        reasons.append("good_volume")
+
     elif volume_5m >= 3000:
         conviction_score += 5
+        reasons.append("minimum_volume")
+
+    # ========================================================
+    # TXNS
+    # ========================================================
 
     txns = pair_data.get("txns", {})
     tx_5m = txns.get("m5", {}) or {}
@@ -71,15 +135,29 @@ def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
     buys = int(tx_5m.get("buys") or 0)
     sells = int(tx_5m.get("sells") or 0)
 
+    # ========================================================
+    # BUY PRESSURE
+    # ========================================================
+
     if buys >= 40:
         conviction_score += 15
+        reasons.append("heavy_buy_pressure")
+
     elif buys >= 20:
         conviction_score += 10
+        reasons.append("good_buy_pressure")
+
     elif buys >= 8:
         conviction_score += 5
+        reasons.append("light_buy_pressure")
+
+    # ========================================================
+    # ONE SIDED FLOW
+    # ========================================================
 
     if sells == 0 and buys >= 25:
         conviction_score -= 15
+        penalties.append("one_sided_flow")
 
     elif buys > 0 and sells > 0:
 
@@ -87,40 +165,69 @@ def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
 
         if ratio >= 2.5:
             conviction_score += 10
+            reasons.append("strong_buy_sell_ratio")
+
         elif ratio >= 1.5:
             conviction_score += 5
+            reasons.append("healthy_buy_sell_ratio")
+
         elif ratio < 0.8:
             conviction_score -= 5
+            penalties.append("weak_buy_sell_ratio")
+
+    # ========================================================
+    # PRICE CHANGE
+    # ========================================================
 
     price_change_5m = float(
         pair_data.get("priceChange", {}).get("m5") or 0
     )
 
-    # HYPER PUMP PENALTY — bundle/sniper signature
     if price_change_5m >= 300:
         conviction_score -= 30
+        penalties.append("hyper_pump_penalty")
+
     elif price_change_5m >= 150:
         conviction_score -= 15
+        penalties.append("overextended_price")
+
     elif price_change_5m >= 15:
         conviction_score += 10
+        reasons.append("momentum_building")
+
     elif price_change_5m >= 7:
         conviction_score += 5
+        reasons.append("healthy_momentum")
+
     elif price_change_5m <= -8:
         conviction_score -= 10
+        penalties.append("price_breakdown")
 
-    fdv = float(pair_data.get("fdv") or 0)
+    # ========================================================
+    # FDV
+    # ========================================================
+
+    fdv = float(
+        pair_data.get("fdv") or 0
+    )
 
     if fdv > 0:
 
         if fdv > 25000000:
             conviction_score -= 20
+            penalties.append("overinflated_fdv")
 
         elif fdv > 10000000:
             conviction_score -= 10
+            penalties.append("high_fdv")
 
         elif 500000 <= fdv <= 2000000:
             conviction_score += 5
-        # fdv < 500K = too micro = no bonus
+            reasons.append("healthy_fdv")
+
+    # ========================================================
+    # LIQ / FDV
+    # ========================================================
 
     if liquidity > 0 and fdv > 0:
 
@@ -128,30 +235,57 @@ def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
 
         if liq_to_fdv >= 0.12:
             conviction_score += 10
+            reasons.append("excellent_liq_ratio")
 
         elif liq_to_fdv >= 0.06:
             conviction_score += 5
+            reasons.append("healthy_liq_ratio")
 
         elif liq_to_fdv < 0.02:
             conviction_score -= 10
+            penalties.append("weak_liq_ratio")
 
-    # ANTI-BOT — wash trading detection (same wallets spamming)
+    # ========================================================
+    # ANTI BOT
+    # ========================================================
+
     if buys >= 12:
-        estimated_buyers = buyers if buyers > 0 else int(buys * 0.35)
+
+        estimated_buyers = (
+            buyers
+            if buyers > 0
+            else int(buys * 0.35)
+        )
+
         unique_ratio = estimated_buyers / buys
 
         if unique_ratio < 0.25:
             conviction_score -= 20
+            penalties.append("wash_trade_risk")
+
         elif unique_ratio < 0.40:
             conviction_score -= 10
+            penalties.append("anti_bot_penalty")
 
-    # MICRO FDV TRAP — too small = unverifiable
+    # ========================================================
+    # MICRO FDV
+    # ========================================================
+
     if fdv > 0 and fdv < 100000:
         conviction_score -= 20
+        penalties.append("micro_fdv_trap")
 
-    # LOW LIQ + HIGH VOLUME SCAM PROFILE — self-buying signature
+    # ========================================================
+    # LOW LIQ + HIGH VOL
+    # ========================================================
+
     if liquidity < 10000 and volume_5m > 50000:
         conviction_score -= 20
+        penalties.append("fake_volume_profile")
+
+    # ========================================================
+    # SUSPICIOUS LABELS
+    # ========================================================
 
     suspicious = 0
 
@@ -161,25 +295,90 @@ def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
             pair_data.get("labels", [])
         ).lower()
 
-        if "scam" in labels_joined or "rug" in labels_joined:
+        if "scam" in labels_joined:
+            suspicious += 1
+
+        if "rug" in labels_joined:
             suspicious += 1
 
     if suspicious > 0:
         conviction_score -= 20
+        penalties.append("suspicious_labels")
 
-    conviction_score = max(0, min(95, conviction_score))
+    # ========================================================
+    # FINAL SCORE
+    # ========================================================
+
+    conviction_score = max(
+        0,
+        min(95, conviction_score)
+    )
+
+    # ========================================================
+    # DEBUG BLOCK
+    # ========================================================
+
+    debug_data = {
+        "symbol": token_symbol,
+        "score": conviction_score,
+        "reasons": reasons,
+        "penalties": penalties,
+        "liq": liquidity,
+        "vol": volume_5m,
+        "buys": buys,
+        "sells": sells,
+        "fdv": fdv,
+        "price_change_5m": price_change_5m,
+    }
+
+    logging.info(
+        "🧠 SCORE DEBUG: %s",
+        debug_data
+    )
+
+    # ========================================================
+    # HARD BLOCKS
+    # ========================================================
 
     if suspicious > 0:
-        return False, "SCAM_LABEL_RISK", pool_age_seconds, conviction_score
+        return (
+            False,
+            "SCAM_LABEL_RISK",
+            pool_age_seconds,
+            conviction_score
+        )
 
-    # Thresholds raised — 100/100 ab rare hoga
+    # ========================================================
+    # FINAL DECISION
+    # ========================================================
+
     if conviction_score >= 85:
-        return True, "HUNTER_ALPHA_CANDIDATE", pool_age_seconds, conviction_score
+
+        return (
+            True,
+            "HUNTER_ALPHA_CANDIDATE",
+            pool_age_seconds,
+            conviction_score
+        )
 
     if conviction_score >= 70:
-        return False, "WATCHLIST", pool_age_seconds, conviction_score
 
-    return False, "LOW_CONVICTION", pool_age_seconds, conviction_score
+        return (
+            False,
+            "WATCHLIST",
+            pool_age_seconds,
+            conviction_score
+        )
+
+    return (
+        False,
+        "LOW_CONVICTION",
+        pool_age_seconds,
+        conviction_score
+    )
+
+    
+    
 
 # ==========================================
 # LOGGING
