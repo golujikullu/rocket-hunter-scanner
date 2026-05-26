@@ -39,7 +39,8 @@ def run_alpha_shield_v3(pair_data, now_ts):
     if pool_age_seconds > 900:
         return False, "STALE_POOL_SKIP", pool_age_seconds, 0
 
-    conviction_score = 50
+    # PIRANHA MODE — score 0 se shuru, earn karo
+    conviction_score = 0
 
     if pool_age_seconds <= 180:
         conviction_score += 20
@@ -112,8 +113,9 @@ def run_alpha_shield_v3(pair_data, now_ts):
         elif fdv > 10000000:
             conviction_score -= 10
 
-        elif fdv <= 2000000:
+        elif 500000 <= fdv <= 2000000:
             conviction_score += 5
+        # fdv < 500K = too micro = no bonus
 
     if liquidity > 0 and fdv > 0:
 
@@ -150,11 +152,12 @@ def run_alpha_shield_v3(pair_data, now_ts):
     if suspicious > 0:
         return False, "SCAM_LABEL_RISK", pool_age_seconds, conviction_score
 
-    if conviction_score >= 80:
+    # Thresholds raised — 100/100 ab rare hoga
+    if conviction_score >= 85:
         return True, "HUNTER_ALPHA_CANDIDATE", pool_age_seconds, conviction_score
 
-    if conviction_score >= 65:
-        return True, "EARLY_MOMENTUM_BUILD", pool_age_seconds, conviction_score
+    if conviction_score >= 70:
+        return False, "WATCHLIST", pool_age_seconds, conviction_score
 
     return False, "LOW_CONVICTION", pool_age_seconds, conviction_score
 
@@ -859,7 +862,7 @@ def scanner():
 
                     tx = attr.get("transactions", {})
 
-                    txh1 = tx.get("h1") or tx.get("m15") or {}
+                    txh1 = tx.get("m5") or tx.get("m15") or tx.get("h1") or {}
 
                     buys = int(txh1.get("buys") or 0)
                     sells = int(txh1.get("sells") or 0)
@@ -913,7 +916,10 @@ def scanner():
                             "address": mint_address,
                         },
                         "liquidity": {"usd": real_liq},
-                        "volume":    {"m5": float(attr.get("volume_usd", {}).get("m5") or 0)},
+                        "volume": {
+                        "m5": float(attr.get("volume_usd", {}).get("m5") or 0),
+                        "h24": float(attr.get("volume_usd", {}).get("h24") or 0)
+                    },
                         "pairCreatedAt": pool_created_at_ms,
                         "txns": {
                             "m5": {
