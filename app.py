@@ -18,7 +18,7 @@ from urllib3.util.retry import Retry
 
 BASE_TICKERS = {"SOL", "WSOL", "USDC", "USDT", "USDC.SOL", "USDT.SOL"}
 
-def run_alpha_shield_v3(pair_data, now_ts):
+def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
 
     base_token = pair_data.get("baseToken", {})
     token_symbol = str(base_token.get("symbol") or "???").strip()
@@ -96,7 +96,12 @@ def run_alpha_shield_v3(pair_data, now_ts):
         pair_data.get("priceChange", {}).get("m5") or 0
     )
 
-    if price_change_5m >= 15:
+    # HYPER PUMP PENALTY — bundle/sniper signature
+    if price_change_5m >= 300:
+        conviction_score -= 30
+    elif price_change_5m >= 150:
+        conviction_score -= 15
+    elif price_change_5m >= 15:
         conviction_score += 10
     elif price_change_5m >= 7:
         conviction_score += 5
@@ -130,6 +135,24 @@ def run_alpha_shield_v3(pair_data, now_ts):
         elif liq_to_fdv < 0.02:
             conviction_score -= 10
 
+    # ANTI-BOT — wash trading detection (same wallets spamming)
+    if buys >= 12:
+        estimated_buyers = buyers if buyers > 0 else int(buys * 0.35)
+        unique_ratio = estimated_buyers / buys
+
+        if unique_ratio < 0.25:
+            conviction_score -= 20
+        elif unique_ratio < 0.40:
+            conviction_score -= 10
+
+    # MICRO FDV TRAP — too small = unverifiable
+    if fdv > 0 and fdv < 100000:
+        conviction_score -= 20
+
+    # LOW LIQ + HIGH VOLUME SCAM PROFILE — self-buying signature
+    if liquidity < 10000 and volume_5m > 50000:
+        conviction_score -= 20
+
     suspicious = 0
 
     if pair_data.get("labels"):
@@ -144,10 +167,7 @@ def run_alpha_shield_v3(pair_data, now_ts):
     if suspicious > 0:
         conviction_score -= 20
 
-    conviction_score = max(
-        0,
-        min(100, conviction_score)
-    )
+    conviction_score = max(0, min(95, conviction_score))
 
     if suspicious > 0:
         return False, "SCAM_LABEL_RISK", pool_age_seconds, conviction_score
@@ -862,11 +882,18 @@ def scanner():
 
                     tx = attr.get("transactions", {})
 
-                    txh1 = tx.get("m5") or tx.get("m15") or tx.get("h1") or {}
+                    tx_m5  = tx.get("m5") or {}
+                    tx_m15 = tx.get("m15") or {}
+                    tx_h1  = tx.get("h1") or {}
 
-                    buys = int(txh1.get("buys") or 0)
-                    sells = int(txh1.get("sells") or 0)
-                    buyers = int(txh1.get("buyers") or 0)
+                    tx_source = tx_m5 if tx_m5 else tx_m15 if tx_m15 else tx_h1
+                    tx_label  = "m5" if tx_m5 else "m15" if tx_m15 else "h1"
+
+                    logging.info(f"TX SOURCE: {tx_label}")
+
+                    buys   = int(tx_source.get("buys") or 0)
+                    sells  = int(tx_source.get("sells") or 0)
+                    buyers = int(tx_source.get("buyers") or 0)
 
                     suspicious = int(
                         attr.get("community_sus_report") or 0
@@ -937,7 +964,9 @@ def scanner():
                     }
 
                     passed, shield_reason, _, conviction_score = run_alpha_shield_v3(
-                        pair_data_v3, now_ts
+                        pair_data_v3,
+                        now_ts,
+                        buyers
                     )
 
                     logging.info(
