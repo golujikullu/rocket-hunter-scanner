@@ -42,9 +42,122 @@ def run_alpha_shield_v3(pair_data, now_ts):
     conviction_score = 50
 
     if pool_age_seconds <= 180:
-         conviction_score += 20        
-# ========================================================
-# ALPHA SHIELD V3 - PRODUCTION PREDICTIVE LAYER
+        conviction_score += 20
+    elif pool_age_seconds <= 420:
+        conviction_score += 10
+    elif pool_age_seconds <= 900:
+        conviction_score += 5
+
+    if liquidity >= 20000:
+        conviction_score += 15
+    elif liquidity >= 10000:
+        conviction_score += 10
+    elif liquidity >= 5000:
+        conviction_score += 5
+
+    if volume_5m >= 50000:
+        conviction_score += 20
+    elif volume_5m >= 20000:
+        conviction_score += 15
+    elif volume_5m >= 8000:
+        conviction_score += 10
+    elif volume_5m >= 3000:
+        conviction_score += 5
+
+    txns = pair_data.get("txns", {})
+    tx_5m = txns.get("m5", {}) or {}
+
+    buys = int(tx_5m.get("buys") or 0)
+    sells = int(tx_5m.get("sells") or 0)
+
+    if buys >= 40:
+        conviction_score += 15
+    elif buys >= 20:
+        conviction_score += 10
+    elif buys >= 8:
+        conviction_score += 5
+
+    if sells == 0 and buys >= 25:
+        conviction_score -= 15
+
+    elif buys > 0 and sells > 0:
+
+        ratio = buys / max(sells, 1)
+
+        if ratio >= 2.5:
+            conviction_score += 10
+        elif ratio >= 1.5:
+            conviction_score += 5
+        elif ratio < 0.8:
+            conviction_score -= 5
+
+    price_change_5m = float(
+        pair_data.get("priceChange", {}).get("m5") or 0
+    )
+
+    if price_change_5m >= 15:
+        conviction_score += 10
+    elif price_change_5m >= 7:
+        conviction_score += 5
+    elif price_change_5m <= -8:
+        conviction_score -= 10
+
+    fdv = float(pair_data.get("fdv") or 0)
+
+    if fdv > 0:
+
+        if fdv > 25000000:
+            conviction_score -= 20
+
+        elif fdv > 10000000:
+            conviction_score -= 10
+
+        elif fdv <= 2000000:
+            conviction_score += 5
+
+    if liquidity > 0 and fdv > 0:
+
+        liq_to_fdv = liquidity / fdv
+
+        if liq_to_fdv >= 0.12:
+            conviction_score += 10
+
+        elif liq_to_fdv >= 0.06:
+            conviction_score += 5
+
+        elif liq_to_fdv < 0.02:
+            conviction_score -= 10
+
+    suspicious = 0
+
+    if pair_data.get("labels"):
+
+        labels_joined = " ".join(
+            pair_data.get("labels", [])
+        ).lower()
+
+        if "scam" in labels_joined or "rug" in labels_joined:
+            suspicious += 1
+
+    if suspicious > 0:
+        conviction_score -= 20
+
+    conviction_score = max(
+        0,
+        min(100, conviction_score)
+    )
+
+    if suspicious > 0:
+        return False, "SCAM_LABEL_RISK", pool_age_seconds, conviction_score
+
+    if conviction_score >= 80:
+        return True, "HUNTER_ALPHA_CANDIDATE", pool_age_seconds, conviction_score
+
+    if conviction_score >= 65:
+        return True, "EARLY_MOMENTUM_BUILD", pool_age_seconds, conviction_score
+
+    return False, "LOW_CONVICTION", pool_age_seconds, conviction_score
+
 # ==========================================
 # LOGGING
 # ==========================================
@@ -265,7 +378,7 @@ def init_journal_db():
             shield_result TEXT,
             alert_sent INTEGER,
             label TEXT,
-conviction_score INTEGER DEFAULT 0
+            conviction_score INTEGER DEFAULT 0
         )
     """)
 
@@ -377,22 +490,13 @@ def verify_on_dexscreener(mint_address):
 
         return real_liq, dex_url, price_usd
 
-    except Exception as e:
-        logging.error(f"DexScreener verify error: {e}")
+    except Exception:
+        logging.exception("DexScreener verify error")
         return 0, None, None
 
 # ==========================================
 # ALPHA SHIELD V2
 # ==========================================
-# ==========================================
-# CONVICTION ENGINE
-# ==========================================
-
-
-# ==========================================
-# ALPHA SHIELD V2
-# ==========================================
-
 
 def alpha_shield_v2(fdv, liquidity, buys, sells, buyers, suspicious_reports=0):
 
@@ -425,7 +529,9 @@ def send_alert(
     gecko_url,
     price_change,
     entry_label,
-    mint_address
+    mint_address,
+    conviction_score=0,
+    shield_reason=""
 ):
 
     if liquidity > 50000 and volume > 20000:
@@ -452,7 +558,7 @@ def send_alert(
         f"📊 Volume: ${volume:,.0f}\n"
         f"{change_icon} Change: {price_change:.1f}%\n\n"
         f"{risk}\n"
-        f"🛡️ Alpha Shield V2 Active\n"
+        f"🛡️ Alpha Shield V3 | Score: {conviction_score}/100\n"
         f"✅ <i>Verified on DexScreener</i>"
     )
 
@@ -531,10 +637,9 @@ def log_alert(
     fdv,
     shield_result,
     alert_sent,
-        label,
-     conviction_score=0
+    label,
+    conviction_score=0
 ):
-
 
     with journal_db() as conn:
 
@@ -553,12 +658,12 @@ def log_alert(
                 buyers,
                 suspicious,
                 fdv,
-             shield_result,
-alert_sent,
-label,
-conviction_score
-)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                shield_result,
+                alert_sent,
+                label,
+                conviction_score
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             mint,
             symbol,
@@ -574,10 +679,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             suspicious,
             fdv,
             shield_result,
-1 if alert_sent else 0,
-label or "pending",
-conviction_score
-))
+            1 if alert_sent else 0,
+            label or "pending",
+            conviction_score
+        ))
 
         conn.commit()
 
@@ -792,18 +897,45 @@ def scanner():
                             fdv,
                             "LOW_DEX_LIQUIDITY",
                             False,
-                            "rejected"
+                            "rejected",
+                            0
                         )
 
                         continue
 
-                    passed, shield_reason = alpha_shield_v2(
-                        fdv,
-                        real_liq,
-                        buys,
-                        sells,
-                        buyers,
-                        suspicious
+                    # ── Alpha Shield V3 ──
+                    # pool_time already parsed above — convert to ms for V3
+                    pool_created_at_ms = pool_time.timestamp() * 1000.0
+
+                    pair_data_v3 = {
+                        "baseToken": {
+                            "symbol": symbol,
+                            "address": mint_address,
+                        },
+                        "liquidity": {"usd": real_liq},
+                        "volume":    {"m5": float(attr.get("volume_usd", {}).get("m5") or 0)},
+                        "pairCreatedAt": pool_created_at_ms,
+                        "txns": {
+                            "m5": {
+                                "buys":  buys,
+                                "sells": sells,
+                            }
+                        },
+                        "priceChange": {
+                            "m5": float(
+                                attr.get("price_change_percentage", {}).get("m5") or 0
+                            )
+                        },
+                        "fdv":    fdv,
+                        "labels": attr.get("labels", []),
+                    }
+
+                    passed, shield_reason, _, conviction_score = run_alpha_shield_v3(
+                        pair_data_v3, now_ts
+                    )
+
+                    logging.info(
+                        f"🛡️ V3: {symbol} | {shield_reason} | score={conviction_score}"
                     )
 
                     if not passed:
@@ -824,11 +956,12 @@ def scanner():
                             fdv,
                             shield_reason,
                             False,
-                            "blocked"
+                            "blocked",
+                            conviction_score
                         )
 
                         logging.info(
-                            f"🚫 SHIELD BLOCKED: {symbol} | {shield_reason}"
+                            f"🚫 SHIELD BLOCKED: {symbol} | {shield_reason} | score={conviction_score}"
                         )
 
                         continue
@@ -845,7 +978,9 @@ def scanner():
                         gecko_url,
                         price_change,
                         entry_label,
-                        mint_address
+                        mint_address,
+                        conviction_score,
+                        shield_reason
                     )
 
                     if success:
@@ -867,9 +1002,10 @@ def scanner():
                             buyers,
                             suspicious,
                             fdv,
-                            "SURVIVABLE",
+                            shield_reason,
                             True,
-                            "sent"
+                            "sent",
+                            conviction_score
                         )
 
                         alerts += 1
@@ -879,8 +1015,8 @@ def scanner():
                     if alerts >= MAX_ALERTS_PER_SCAN:
                         break
 
-                except Exception as e:
-                    logging.error(f"Pool Error: {e}")
+                except Exception:
+                    logging.exception("Pool Error")
 
             logging.info(f"✅ Done | Alerts: {alerts}")
 
@@ -890,14 +1026,14 @@ def scanner():
                 last_error=None
             )
 
-        except Exception as e:
+        except Exception:
 
-            logging.error(f"Scanner Error: {e}")
+            logging.exception("Scanner Error")
 
             set_scan_state(
                 status="scanner_error",
                 last_alerts=alerts,
-                last_error=str(e)
+                last_error="scanner_exception"
             )
 
         logging.info(f"⏳ Waiting {SCAN_INTERVAL}s...")
