@@ -742,7 +742,43 @@ def alpha_shield_v2(fdv, liquidity, buys, sells, buyers, suspicious_reports=0):
 # ==========================================
 # TELEGRAM ALERT
 # ==========================================
+def build_telegram_message(
+    symbol,
+    liquidity,
+    volume,
+    price_change,
+    entry_label,
+    mint_address,
+    conviction_score,
+    shield_reason
+):
+    if liquidity > 50000 and volume > 20000:
+        risk = "🛡️ LOW RISK"
+    elif liquidity > 10000:
+        risk = "⚠️ MEDIUM RISK"
+    else:
+        risk = "🔴 HIGH RISK"
 
+    change_icon = "📈" if price_change >= 0 else "📉"
+    clean_symbol = symbol.replace("<", "&lt;").replace(">", "&gt;")
+    short_mint = f"{mint_address[:6]}...{mint_address[-6:]}"
+
+    return (
+        f"🚀 <b>Rocket Hunter Alert</b>\n\n"
+        f"{entry_label}\n"
+        f"🏷 Tag: 🧪 CONTROLLED OBSERVATION SIGNAL\n"
+        f"⏳ Survival Check Passed: {SURVIVAL_SECONDS} Seconds\n\n"
+        f"💎 <b>{clean_symbol} / SOL</b>\n"
+        f"🪪 Mint: <code>{short_mint}</code>\n\n"
+        f"💧 Liquidity: ${liquidity:,.0f}\n"
+        f"📊 Volume: ${volume:,.0f}\n"
+        f"{change_icon} Change: {price_change:.1f}%\n\n"
+        f"{risk}\n"
+        f"🛡️ Alpha Shield V3 | Score: {conviction_score}/100\n"
+        f"🧠 Result: <b>{shield_reason}</b>\n"
+        f"⚠️ DYOR. Early coins are high risk.\n"
+        f"✅ <i>Verified on DexScreener</i>"
+    )
 def send_alert(
     symbol,
     liquidity,
