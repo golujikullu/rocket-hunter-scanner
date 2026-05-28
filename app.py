@@ -409,7 +409,7 @@ if suspicious > 0:
 # FINAL DECISION  
 # ========================================================  
 
-if conviction_score >= 85:  
+if conviction_score >= 75:  
 
     return (  
         True,  
