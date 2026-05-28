@@ -1736,12 +1736,11 @@ START ENGINE
 ==========================================
 if __name__ == "__main__":
 
-Thread(target=scanner,         daemon=True).start()  
-Thread(target=outcome_tracker, daemon=True).start()  
+    Thread(target=scanner, daemon=True).start()
+    Thread(target=outcome_tracker, daemon=True).start()
 
-app.run(  
-    host="0.0.0.0",  
-    port=PORT,  
-    use_reloader=False  
-)
-
+    app.run(
+        host="0.0.0.0",
+        port=PORT,
+        use_reloader=False
+    )
