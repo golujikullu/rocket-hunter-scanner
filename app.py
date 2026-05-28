@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import random
 import sqlite3
@@ -17,13 +18,10 @@ from urllib3.util.retry import Retry
 # ========================================================
 
 BASE_TICKERS = {"SOL", "WSOL", "USDC", "USDT", "USDC.SOL", "USDT.SOL"}
- 
+
 # ========================================================
 # ALPHA SHIELD V3 — EXPLAINABLE CONVICTION ENGINE
-# FULL REPLACEMENT FUNCTION
 # ========================================================
-
-BASE_TICKERS = {"SOL", "WSOL", "USDC", "USDT", "USDC.SOL", "USDT.SOL"}
 
 def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
 
@@ -38,7 +36,7 @@ def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
     ).strip()
 
     if token_symbol.upper() in BASE_TICKERS or not token_id:
-        return False, "BASE_ASSET_SKIP", 0, 0
+        return False, "BASE_ASSET_SKIP", 0, 0, [], []
 
     liquidity = float(
         pair_data.get("liquidity", {}).get("usd") or 0
@@ -49,7 +47,7 @@ def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
     )
 
     if liquidity < 3000:
-        return False, "LOW_LIQUIDITY_SKIP", 0, 0
+        return False, "LOW_LIQUIDITY_SKIP", 0, 0, [], []
 
     pair_created_at = float(
         pair_data.get("pairCreatedAt") or 0
@@ -62,7 +60,7 @@ def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
     )
 
     if pool_age_seconds > 900:
-        return False, "STALE_POOL_SKIP", pool_age_seconds, 0
+        return False, "STALE_POOL_SKIP", pool_age_seconds, 0, [], []
 
     # ========================================================
     # CONVICTION ENGINE
@@ -306,7 +304,59 @@ def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
         penalties.append("suspicious_labels")
 
     # ========================================================
-    # FINAL SCORE
+    # 🆕 UPGRADE 1: SYNTHETIC PUMP BLOCK
+    # Catches: 光源 pattern — huge buyers, tiny sellers, LP collapse
+    # ========================================================
+
+    buyer_seller_ratio = buys / max(sells, 1)
+
+    if buyer_seller_ratio > 20 and liquidity < 5000:
+        conviction_score -= 35
+        penalties.append("synthetic_pump_risk")
+        logging.info(f"🚨 SYNTHETIC PUMP: ratio={buyer_seller_ratio:.1f}, liq={liquidity}")
+
+    # ========================================================
+    # 🆕 UPGRADE 2: VOL/LIQ REALITY CHECK
+    # Catches: LP=$1 but Volume=$2M — impossible organic market
+    # ========================================================
+
+    vol_liq_ratio = volume_5m / max(liquidity, 1)
+
+    if vol_liq_ratio > 15:
+        conviction_score -= 25
+        penalties.append("unrealistic_volume")
+        logging.info(f"🚨 FAKE VOLUME: vol={volume_5m}, liq={liquidity}, ratio={vol_liq_ratio:.1f}")
+
+    # ========================================================
+    # 🆕 UPGRADE 3: FLASH PUMP TRAP (BONUS — extra safety)
+    # Catches: 80%+ spike in 5m but volume < liquidity = fake first candle
+    # ========================================================
+
+    if price_change_5m > 80 and volume_5m < liquidity:
+        conviction_score -= 20
+        penalties.append("flash_pump")
+        logging.info(f"🚨 FLASH PUMP TRAP: price_5m={price_change_5m}%, vol={volume_5m}, liq={liquidity}")
+
+    # ========================================================
+    # 🆕 UPGRADE 4: CONTINUATION BONUS
+    # ========================================================
+
+    if (
+        conviction_score >= 55
+        and price_change_5m > 15
+        and buys > sells
+        and liquidity > 10000
+        and "flash_pump" not in penalties
+        and "synthetic_pump_risk" not in penalties
+    ):
+        conviction_score += 10
+        reasons.append("momentum_continuation")
+        logging.info(
+            f"✅ CONTINUATION BONUS: +10 | score now={conviction_score}"
+        )
+
+    # ========================================================
+    # FINAL SCORE CLAMP
     # ========================================================
 
     conviction_score = max(
@@ -345,7 +395,9 @@ def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
             False,
             "SCAM_LABEL_RISK",
             pool_age_seconds,
-            conviction_score
+            conviction_score,
+            reasons,
+            penalties
         )
 
     # ========================================================
@@ -358,7 +410,9 @@ def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
             True,
             "HUNTER_ALPHA_CANDIDATE",
             pool_age_seconds,
-            conviction_score
+            conviction_score,
+            reasons,
+            penalties
         )
 
     if conviction_score >= 70:
@@ -367,18 +421,21 @@ def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
             False,
             "WATCHLIST",
             pool_age_seconds,
-            conviction_score
+            conviction_score,
+            reasons,
+            penalties
         )
 
     return (
         False,
         "LOW_CONVICTION",
         pool_age_seconds,
-        conviction_score
+        conviction_score,
+        reasons,
+        penalties
     )
 
-    
-    
+SURVIVAL_SECONDS = 300
 
 # ==========================================
 # LOGGING
@@ -526,7 +583,11 @@ def recent():
                    entry_label,
                    shield_result,
                    alert_sent,
-                   label
+                   label,
+                   conviction_score,
+                   reasons_json,
+                   penalties_json,
+                   tx_source
             FROM alerts
             ORDER BY id DESC
             LIMIT 20
@@ -600,7 +661,10 @@ def init_journal_db():
             shield_result TEXT,
             alert_sent INTEGER,
             label TEXT,
-            conviction_score INTEGER DEFAULT 0
+            conviction_score INTEGER DEFAULT 0,
+            reasons_json TEXT,
+            penalties_json TEXT,
+            tx_source TEXT
         )
     """)
 
@@ -779,6 +843,7 @@ def build_telegram_message(
         f"⚠️ DYOR. Early coins are high risk.\n"
         f"✅ <i>Verified on DexScreener</i>"
     )
+
 def send_alert(
     symbol,
     liquidity,
@@ -896,7 +961,10 @@ def log_alert(
     shield_result,
     alert_sent,
     label,
-    conviction_score=0
+    conviction_score=0,
+    reasons_json=None,
+    penalties_json=None,
+    tx_source=None
 ):
 
     with journal_db() as conn:
@@ -919,9 +987,12 @@ def log_alert(
                 shield_result,
                 alert_sent,
                 label,
-                conviction_score
+                conviction_score,
+                reasons_json,
+                penalties_json,
+                tx_source
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             mint,
             symbol,
@@ -939,7 +1010,10 @@ def log_alert(
             shield_result,
             1 if alert_sent else 0,
             label or "pending",
-            conviction_score
+            conviction_score,
+            reasons_json,
+            penalties_json,
+            tx_source
         ))
 
         conn.commit()
@@ -1097,37 +1171,58 @@ def scanner():
 
                     vol_data = attr.get("volume_usd", {})
 
-                    volume = (
-                        float(vol_data.get("h24") or 0)
-                        or float(vol_data.get("h1") or 0) * 24
-                        or float(vol_data.get("m5") or 0) * 288
-                    )
+                    # ── Timeframe: extract all separately ──
+                    volume_m5  = float(vol_data.get("m5")  or 0)
+                    volume_h1  = float(vol_data.get("h1")  or 0)
+                    volume_h24 = float(vol_data.get("h24") or 0)
+
+                    # Discovery: m5 must show live activity
+                    # Fallback to h1/h24 only if m5 truly missing (new pool)
+                    if volume_m5 >= 100:
+                        volume = volume_m5
+                    elif volume_h1 > 0:
+                        volume = volume_h1
+                    else:
+                        volume = volume_h24
 
                     if volume < MIN_VOLUME:
                         continue
 
                     change_data = attr.get("price_change_percentage", {})
 
-                    price_change = float(
-                        change_data.get("h24")
-                        or change_data.get("h1")
-                        or change_data.get("m5")
-                        or 0
-                    )
+                    # Price change: m5 only — matches conviction engine
+                    price_change_m5 = float(change_data.get("m5") or 0)
+                    price_change = price_change_m5
 
+                    # ── Transactions: strict m5, honest fallback ──
                     tx = attr.get("transactions", {})
 
-                    tx_m5  = tx.get("m5") or {}
-                    tx_m15 = tx.get("m15") or {}
-                    tx_h1  = tx.get("h1") or {}
+                    tx_m5_raw  = tx.get("m5") or {}
+                    tx_m15_raw = tx.get("m15") or {}
 
-                    tx_source = tx_m5 if tx_m5 else tx_m15 if tx_m15 else tx_h1
-                    tx_label  = "m5" if tx_m5 else "m15" if tx_m15 else "h1"
+                    # Only use real m5 data for conviction engine
+                    has_real_m5 = bool(
+                        tx_m5_raw.get("buys") or tx_m5_raw.get("sells")
+                    )
+                    has_real_m15 = bool(
+                        tx_m15_raw.get("buys") or tx_m15_raw.get("sells")
+                    )
+
+                    if has_real_m5:
+                        tx_source = tx_m5_raw
+                        tx_label  = "m5"
+                    elif has_real_m15:
+                        tx_source = tx_m15_raw
+                        tx_label  = "m15_fallback"
+                    else:
+                        # No recent activity — skip, not worth alerting
+                        logging.info(f"⏭️ No m5/m15 tx data: {symbol}")
+                        continue
 
                     logging.info(f"TX SOURCE: {tx_label}")
 
-                    buys   = int(tx_source.get("buys") or 0)
-                    sells  = int(tx_source.get("sells") or 0)
+                    buys   = int(tx_source.get("buys")   or 0)
+                    sells  = int(tx_source.get("sells")  or 0)
                     buyers = int(tx_source.get("buyers") or 0)
 
                     suspicious = int(
@@ -1163,13 +1258,14 @@ def scanner():
                             "LOW_DEX_LIQUIDITY",
                             False,
                             "rejected",
-                            0
+                            0,
+                            json.dumps([]),
+                            json.dumps(["low_dex_liquidity"]),
+                            tx_label
                         )
 
                         continue
 
-                    # ── Alpha Shield V3 ──
-                    # pool_time already parsed above — convert to ms for V3
                     pool_created_at_ms = pool_time.timestamp() * 1000.0
 
                     pair_data_v3 = {
@@ -1179,9 +1275,9 @@ def scanner():
                         },
                         "liquidity": {"usd": real_liq},
                         "volume": {
-                        "m5": float(attr.get("volume_usd", {}).get("m5") or 0),
-                        "h24": float(attr.get("volume_usd", {}).get("h24") or 0)
-                    },
+                            "m5":  volume_m5,
+                            "h24": volume_h24,
+                        },
                         "pairCreatedAt": pool_created_at_ms,
                         "txns": {
                             "m5": {
@@ -1190,15 +1286,21 @@ def scanner():
                             }
                         },
                         "priceChange": {
-                            "m5": float(
-                                attr.get("price_change_percentage", {}).get("m5") or 0
-                            )
+                            "m5": price_change_m5,
                         },
-                        "fdv":    fdv,
-                        "labels": attr.get("labels", []),
+                        "fdv":      fdv,
+                        "labels":   attr.get("labels", []),
+                        "tx_label": tx_label,
                     }
 
-                    passed, shield_reason, _, conviction_score = run_alpha_shield_v3(
+                    (
+                        passed,
+                        shield_reason,
+                        _,
+                        conviction_score,
+                        reasons,
+                        penalties
+                    ) = run_alpha_shield_v3(
                         pair_data_v3,
                         now_ts,
                         buyers
@@ -1227,7 +1329,10 @@ def scanner():
                             shield_reason,
                             False,
                             "blocked",
-                            conviction_score
+                            conviction_score,
+                            json.dumps(reasons),
+                            json.dumps(penalties),
+                            tx_label
                         )
 
                         logging.info(
@@ -1275,7 +1380,10 @@ def scanner():
                             shield_reason,
                             True,
                             "sent",
-                            conviction_score
+                            conviction_score,
+                            json.dumps(reasons),
+                            json.dumps(penalties),
+                            tx_label
                         )
 
                         alerts += 1
@@ -1320,5 +1428,6 @@ if __name__ == "__main__":
 
     app.run(
         host="0.0.0.0",
-        port=PORT
+        port=PORT,
+        use_reloader=False
     )
