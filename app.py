@@ -1734,8 +1734,7 @@ while True:
 START ENGINE
 
 ==========================================
-
-if name == "main":
+if __name__ == "__main__":
 
 Thread(target=scanner,         daemon=True).start()  
 Thread(target=outcome_tracker, daemon=True).start()  
