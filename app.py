@@ -794,45 +794,105 @@ DEXSCREENER VERIFY
 
 def verify_on_dexscreener(mint_address):
 
-try:  
-    url = f"https://api.dexscreener.com/latest/dex/tokens/{mint_address}"  
+    try:
 
-    time.sleep(0.25)  
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{mint_address}"
 
-    res = session.get(url, timeout=10)  
+        time.sleep(0.25)
 
-    if res.status_code == 429:  
-        logging.warning("DexScreener 429 rate limit")  
-        return 0, None, None  
+        res = session.get(url, timeout=10)
 
-    if res.status_code != 200:  
-        return 0, None, None  
+        if res.status_code == 429:
 
-    pairs = res.json().get("pairs", [])  
+            logging.warning("DexScreener 429 rate limit")
 
-    solana_pairs = [  
-        p for p in pairs  
-        if p.get("chainId") == "solana"  
-    ]  
+            return 0, None, None
 
-    if not solana_pairs:  
-        return 0, None, None  
+        if res.status_code != 200:
 
-    best = max(  
-        solana_pairs,  
-        key=lambda x: float(x.get("liquidity", {}).get("usd") or 0)  
-    )  
+            logging.warning(
+                f"DexScreener bad status: {res.status_code}"
+            )
 
-    real_liq = float(best.get("liquidity", {}).get("usd") or 0)  
+            return 0, None, None
 
-    dex_url = best.get("url")  
-    price_usd = best.get("priceUsd")  
+        # ==========================================
+        # SAFE JSON PARSE
+        # ==========================================
 
-    return real_liq, dex_url, price_usd  
+        try:
+            data = res.json() or {}
 
-except Exception:  
-    logging.exception("DexScreener verify error")  
-    return 0, None, None
+        except Exception:
+
+            logging.warning(
+                f"Invalid DexScreener JSON: {mint_address}"
+            )
+
+            return 0, None, None
+
+        pairs = data.get("pairs") or []
+
+        # ==========================================
+        # SAFETY CHECK
+        # ==========================================
+
+        if not isinstance(pairs, list):
+
+            logging.warning(
+                f"Pairs not list: {mint_address}"
+            )
+
+            return 0, None, None
+
+        if not pairs:
+
+            logging.info(
+                f"No pairs found: {mint_address}"
+            )
+
+            return 0, None, None
+
+        # ==========================================
+        # FILTER SOLANA PAIRS
+        # ==========================================
+
+        solana_pairs = [
+            p for p in pairs
+            if isinstance(p, dict)
+            and p.get("chainId") == "solana"
+        ]
+
+        if not solana_pairs:
+
+            logging.info(
+                f"No Solana pairs: {mint_address}"
+            )
+
+            return 0, None, None
+
+        best = max(
+            solana_pairs,
+            key=lambda x: float(
+                x.get("liquidity", {}).get("usd") or 0
+            )
+        )
+
+        real_liq = float(
+            best.get("liquidity", {}).get("usd") or 0
+        )
+
+        dex_url = best.get("url")
+
+        price_usd = best.get("priceUsd")
+
+        return real_liq, dex_url, price_usd
+
+    except Exception:
+
+        logging.exception("DexScreener verify error")
+
+        return 0, None, None
 
 ==========================================
 
