@@ -1,4 +1,4 @@
-import os
+timport os
 import json
 import time
 import random
@@ -14,21 +14,10 @@ from contextlib import contextmanager
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-========================================================
-
-ALPHA SHIELD V3 - PRODUCTION PREDICTIVE LAYER
-
-========================================================
-
 BASE_TICKERS = {"SOL", "WSOL", "USDC", "USDT", "USDC.SOL", "USDT.SOL"}
 
-========================================================
-
-ALPHA SHIELD V3 — EXPLAINABLE CONVICTION ENGINE
-
-========================================================
-
 def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
+
 
 base_token = pair_data.get("baseToken", {})  
 
