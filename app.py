@@ -718,7 +718,28 @@ cur.execute("""
 """)  
 
 cur.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_mint ON alert_outcomes(mint)")  
+# ==========================================
+# WHALE CACHE TABLE
+# ==========================================
 
+cur.execute("""
+CREATE TABLE IF NOT EXISTS whale_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mint TEXT,
+    symbol TEXT,
+    wallet TEXT,
+    wallet_size REAL,
+    liquidity REAL,
+    wallet_ratio REAL,
+    source TEXT,
+    detected_at TEXT
+)
+""")
+
+cur.execute("""
+CREATE INDEX IF NOT EXISTS idx_whale_cache_mint
+ON whale_cache(mint)
+""")
 conn.commit()  
 conn.close()
 
