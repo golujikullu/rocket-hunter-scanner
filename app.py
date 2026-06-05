@@ -728,6 +728,29 @@ CREATE TABLE IF NOT EXISTS whale_cache (
 cur.execute("""
 CREATE INDEX IF NOT EXISTS idx_whale_cache_mint
 ON whale_cache(mint)
+""")# ==========================================
+# V4 HISTORIAN SNAPSHOTS
+# ==========================================
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS coin_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mint TEXT,
+    symbol TEXT,
+    age_min INTEGER,
+    liquidity REAL,
+    holders INTEGER,
+    mcap REAL,
+    judge_score INTEGER,
+    judge_result TEXT,
+    stage TEXT,
+    snapshot_time TEXT
+)
+""")
+
+cur.execute("""
+CREATE INDEX IF NOT EXISTS idx_snapshots_mint
+ON coin_snapshots(mint)
 """)
 conn.commit()  
 conn.close()
