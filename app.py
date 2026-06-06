@@ -29,8 +29,8 @@ def run_alpha_shield_v3(pair_data, now_ts, buyers=0):
     base_token.get("address") or ""  
     ).strip()  
 
-    if token_symbol.upper() in BASE_TICKERS or not token_id:  
-    return False, "BASE_ASSET_SKIP", 0, 0, [], []  
+        if token_symbol.upper() in BASE_TICKERS or not token_id:  
+            return False, "BASE_ASSET_SKIP", 0, 0, [], []  
 
     liquidity = float(  
     pair_data.get("liquidity", {}).get("usd") or 0  
