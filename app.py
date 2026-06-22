@@ -996,7 +996,30 @@ return (
     f"⚠️ DYOR. Early coins are high risk.\n"  
     f"✅ <i>Verified on DexScreener</i>"  
 )
+def send_discord_alert(message):
+    try:
+        if not DISCORD_WEBHOOK_URL:
+            logging.warning("Discord webhook not configured")
+            return False
 
+        payload = {"content": message[:1900]}
+
+        res = requests.post(
+            DISCORD_WEBHOOK_URL,
+            json=payload,
+            timeout=10
+        )
+
+        if res.status_code in (200, 204):
+            logging.info("✅ Discord Alert Sent")
+            return True
+
+        logging.error(f"Discord Error: {res.status_code} | {res.text}")
+        return False
+
+    except Exception as e:
+        logging.error(f"Discord Exception: {e}")
+        return False
 def send_alert(
 symbol,
 liquidity,
@@ -1071,9 +1094,10 @@ for _ in range(3):
     try:  
         res = session.post(url, json=payload, timeout=10)  
 
-        if res.status_code == 200:  
-            logging.info(f"✅ ALERT: {symbol} | {entry_label}")  
-            return True  
+       if res.status_code == 200:
+    logging.info(f"✅ ALERT: {symbol} | {entry_label}")
+        send_discord_alert(message)
+        return True 
 
         try:  
             body = res.json()  
