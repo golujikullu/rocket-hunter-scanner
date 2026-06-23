@@ -794,10 +794,10 @@ def cleanup_cache(now_ts):
             for k, _ in oldest:
                 SENT_TOKENS.pop(k, None)
 
-        logging.info("🧹 Cache trimmed")
+            logging.info("🧹 Cache trimmed")
 
-        with STATE_LOCK:
-        LAST_SCAN_STATS["tracked_tokens"] = len(SENT_TOKENS)
+          with STATE_LOCK:
+            LAST_SCAN_STATS["tracked_tokens"] = len(SENT_TOKENS)
 
 # ==========================================
 
