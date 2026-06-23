@@ -608,20 +608,21 @@ return jsonify(rows), 200
 # ==========================================
 
 def get_entry_label(age_hours):
-if age_hours <= 1:
-    return "⚡ ULTRA EARLY"
+    if age_hours <= 1:
+        return "⚡ ULTRA EARLY"
 
-if age_hours <= 6:  
-    return "🟢 EARLY"  
+    if age_hours <= 6:
+        return "🟢 EARLY"
 
-if age_hours <= 24:  
-    return "🟡 LATE ENTRY"  
+    if age_hours <= 24:
+        return "🟡 LATE ENTRY"
 
     return None
+
 
 def normalize_mint(token_id):
-if not token_id:
-    return None
+    if not token_id:
+        return None
 
 raw = token_id.split("_", 1)[1] if token_id.startswith("solana_") else token_id  
 raw = raw.strip()  
