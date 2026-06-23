@@ -462,11 +462,10 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-==========================================
 
-CONFIG
-
-==========================================
+# ==========================================
+# CONFIG
+# ==========================================
 
 DEX_URL = "https://api.geckoterminal.com/api/v2/networks/solana/new_pools"
 
@@ -482,12 +481,10 @@ MAX_FDV = float(os.getenv("MAX_FDV", "25000000"))
 
 JOURNAL_DB = os.getenv("JOURNAL_DB", "rocket-hunter-journal.db")
 PORT = int(os.getenv("PORT", "10000"))
+# ==========================================
+# CACHE
+# ==========================================
 
-==========================================
-
-CACHE
-
-==========================================
 
 SENT_TOKENS = {}
 
@@ -501,12 +498,10 @@ LAST_SCAN_STATS = {
 "last_error": None,
 "tracked_tokens": 0
 }
+# ==========================================
+# HTTP SESSION
+# ==========================================
 
-==========================================
-
-HTTP SESSION
-
-==========================================
 
 def build_session():
 s = requests.Session()
