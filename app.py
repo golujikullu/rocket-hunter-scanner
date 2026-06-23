@@ -504,32 +504,32 @@ LAST_SCAN_STATS = {
 
 
 def build_session():
-s = requests.Session()
+  s = requests.Session()
 
-s.headers.update({  
-    "User-Agent": "RocketHunterV2/1.0"  
-})  
+  s.headers.update({  
+     "User-Agent": "RocketHunterV2/1.0"  
+  })  
 
-retry = Retry(  
-    total=3,  
-    connect=3,  
-    read=3,  
-    backoff_factor=1,  
-    status_forcelist=[429, 500, 502, 503, 504],  
-    allowed_methods=frozenset(["GET", "POST"]),  
-    raise_on_status=False,  
-)  
+   retry = Retry(  
+     total=3,  
+     connect=3,  
+     read=3,  
+     backoff_factor=1,  
+     status_forcelist=[429, 500, 502, 503, 504],  
+     allowed_methods=frozenset(["GET", "POST"]),  
+     raise_on_status=False,  
+   )  
 
-adapter = HTTPAdapter(  
+   adapter = HTTPAdapter(  
     max_retries=retry,  
     pool_connections=20,  
     pool_maxsize=20  
-)  
+   )  
 
-s.mount("https://", adapter)  
-s.mount("http://", adapter)  
+   s.mount("https://", adapter)  
+   s.mount("http://", adapter)  
 
-return s
+   return s
 
 session = build_session()
 # ==========================================
