@@ -774,31 +774,29 @@ def journal_db():
 # ==========================================
 
 def cleanup_cache(now_ts):
-  with CACHE_LOCK:
+    with CACHE_LOCK:
+        expired = [
+            k for k, v in SENT_TOKENS.items()
+            if now_ts - v > COOLDOWN
+        ]
 
-  expired = [  
-        k for k, v in SENT_TOKENS.items()  
-        if now_ts - v > COOLDOWN  
-    ]  
+        for k in expired:
+            SENT_TOKENS.pop(k, None)
 
-    for k in expired:  
-        SENT_TOKENS.pop(k, None)  
+        if len(SENT_TOKENS) > MAX_CACHE:
+            overflow = len(SENT_TOKENS) - MAX_CACHE
 
-    if len(SENT_TOKENS) > MAX_CACHE:  
+            oldest = sorted(
+                SENT_TOKENS.items(),
+                key=lambda x: x[1]
+            )[:overflow]
 
-        overflow = len(SENT_TOKENS) - MAX_CACHE  
+            for k, _ in oldest:
+                SENT_TOKENS.pop(k, None)
 
-        oldest = sorted(  
-            SENT_TOKENS.items(),  
-            key=lambda x: x[1]  
-        )[:overflow]  
+        logging.info("🧹 Cache trimmed")
 
-        for k, _ in oldest:  
-            SENT_TOKENS.pop(k, None)  
-
-        logging.info("🧹 Cache trimmed")  
-
-      with STATE_LOCK:  
+        with STATE_LOCK:
         LAST_SCAN_STATS["tracked_tokens"] = len(SENT_TOKENS)
 
 # ==========================================
