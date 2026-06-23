@@ -1797,11 +1797,8 @@ while True:
 
     time.sleep(SCAN_INTERVAL)
 
-==========================================
-
-START ENGINE
-
-==========================================
+# START ENGINE
+# ====================================
 if __name__ == "__main__":
 
     send_discord_alert("🚀 Captain Hook Test Message")
