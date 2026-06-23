@@ -261,10 +261,20 @@ if buys >= 12:
 # ========================================================  
 # MICRO FDV  
 # ========================================================  
+if fdv > 0:
 
-if fdv > 0 and fdv < 100000:  
-    conviction_score -= 20  
-    penalties.append("micro_fdv_trap")  
+    if fdv < 10000:
+        conviction_score -= 20
+        penalties.append("micro_fdv_trap")
+
+    elif fdv < 25000:
+        conviction_score -= 10
+        penalties.append("low_fdv")
+
+    elif fdv < 50000:
+        conviction_score -= 5
+        penalties.append("mid_low_fdv")
+  
 
 # ========================================================  
 # LOW LIQ + HIGH VOL  
