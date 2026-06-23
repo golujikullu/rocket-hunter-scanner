@@ -755,18 +755,18 @@ conn.commit()
 conn.close()
 
 @contextmanager
+
 def journal_db():
-conn = sqlite3.connect(JOURNAL_DB, timeout=30)
+    conn = sqlite3.connect(JOURNAL_DB, timeout=30)
 
-try:  
-    conn.execute("PRAGMA journal_mode=WAL;")  
-    conn.execute("PRAGMA synchronous=NORMAL;")  
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
 
-    yield conn  
+        yield conn
 
-finally:  
-    conn.close()
-
+    finally:
+        conn.close()
 # ==========================================
 
 # CACHE CLEANUP
