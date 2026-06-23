@@ -644,14 +644,14 @@ return raw
 # ==========================================
 
 def init_journal_db():
-conn = sqlite3.connect(JOURNAL_DB, timeout=30)
+  conn = sqlite3.connect(JOURNAL_DB, timeout=30)
 
-cur = conn.cursor()  
+  cur = conn.cursor()  
 
-cur.execute("PRAGMA journal_mode=WAL;")  
-cur.execute("PRAGMA synchronous=NORMAL;")  
+  cur.execute("PRAGMA journal_mode=WAL;")  
+  cur.execute("PRAGMA synchronous=NORMAL;")  
 
-cur.execute("""  
+  cur.execute("""  
     CREATE TABLE IF NOT EXISTS alerts (  
         id INTEGER PRIMARY KEY AUTOINCREMENT,  
         mint TEXT,  
