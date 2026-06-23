@@ -1788,8 +1788,9 @@ while True:
 # ====================================
 if __name__ == "__main__":
 
-    send_discord_alert("🚀 Captain Hook Test Message")
-
+    logging.info("🔥 DISCORD TEST START")
+send_discord_alert("🔥 SPIDEY TEST 999")
+logging.info("🔥 DISCORD TEST END")
     Thread(target=scanner, daemon=True).start()
 
     Thread(target=outcome_tracker, daemon=True).start()
