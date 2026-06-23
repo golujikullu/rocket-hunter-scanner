@@ -538,36 +538,37 @@ session = build_session()
 
 @app.route("/")
 def home():
-return "🚀 Rocket Hunter V2 — Alpha Shield LIVE", 200
+  return "🚀 Rocket Hunter V2 — Alpha Shield LIVE", 200
 
 @app.route("/healthz")
 def healthz():
-with STATE_LOCK:
-return jsonify(LAST_SCAN_STATS), 200
+  with STATE_LOCK:
+    return jsonify(LAST_SCAN_STATS), 200
 
 @app.route("/stats")
+
 def stats():
-with journal_db() as conn:
-cur = conn.cursor()
+    with journal_db() as conn:
+        cur = conn.cursor()
 
-cur.execute("SELECT COUNT(*) FROM alerts")  
-    total = cur.fetchone()[0]  
+        cur.execute("SELECT COUNT(*) FROM alerts")
+        total = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(*) FROM alerts WHERE alert_sent = 1")  
-    sent = cur.fetchone()[0]  
+        cur.execute("SELECT COUNT(*) FROM alerts ...")
+        sent = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(*) FROM alerts WHERE label = 'blocked'")  
-    blocked = cur.fetchone()[0]  
+        cur.execute("SELECT COUNT(*) FROM alerts ...")
+        blocked = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(*) FROM alerts WHERE label = 'rejected'")  
-    rejected = cur.fetchone()[0]  
+        cur.execute("SELECT COUNT(*) FROM alerts ...")
+        rejected = cur.fetchone()[0]
 
-return jsonify({  
-    "total_logged": total,  
-    "sent": sent,  
-    "blocked": blocked,  
-    "rejected": rejected  
-}), 200
+        return jsonify({
+            "total_logged": total,
+            "sent": sent,
+            "blocked": blocked,
+            "rejected": rejected
+        }), 200
 
 @app.route("/recent")
 def recent():
