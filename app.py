@@ -532,12 +532,9 @@ s.mount("http://", adapter)
 return s
 
 session = build_session()
-
-==========================================
-
-ROUTES
-
-==========================================
+# ==========================================
+# ROUTES
+# ==========================================
 
 @app.route("/")
 def home():
@@ -603,11 +600,11 @@ cur = conn.cursor()
 
 return jsonify(rows), 200
 
-==========================================
+# ==========================================
 
-HELPERS
+# HELPERS
 
-==========================================
+# ==========================================
 
 def get_entry_label(age_hours):
 if age_hours <= 1:
@@ -638,11 +635,11 @@ if any(ch not in allowed for ch in raw):
 
 return raw
 
-==========================================
+# ==========================================
 
-SQLITE
+# SQLITE
 
-==========================================
+# ==========================================
 
 def init_journal_db():
 conn = sqlite3.connect(JOURNAL_DB, timeout=30)
@@ -768,11 +765,11 @@ try:
 finally:  
     conn.close()
 
-==========================================
+# ==========================================
 
-CACHE CLEANUP
+# CACHE CLEANUP
 
-==========================================
+# ==========================================
 
 def cleanup_cache(now_ts):
 with CACHE_LOCK:
@@ -802,11 +799,11 @@ expired = [
     with STATE_LOCK:  
         LAST_SCAN_STATS["tracked_tokens"] = len(SENT_TOKENS)
 
-==========================================
+# ==========================================
 
-TELEGRAM BACKOFF
+# TELEGRAM BACKOFF
 
-==========================================
+# ==========================================
 
 def tg_backoff_sleep(resp_json):
 params = resp_json.get("parameters", {}) if isinstance(resp_json, dict) else {}
@@ -819,11 +816,11 @@ logging.warning(f"Telegram 429 hit, sleeping {wait_s}s")
 
 time.sleep(wait_s)
 
-==========================================
+# ==========================================
 
-DEXSCREENER VERIFY
+# DEXSCREENER VERIFY
 
-==========================================
+# ==========================================
 
 def verify_on_dexscreener(mint_address):
 
@@ -927,11 +924,11 @@ def verify_on_dexscreener(mint_address):
 
         return 0, None, None
 
-==========================================
+# ==========================================
 
-ALPHA SHIELD V2
+# ALPHA SHIELD V2
 
-==========================================
+# ==========================================
 
 def alpha_shield_v2(fdv, liquidity, buys, sells, buyers, suspicious_reports=0):
 
@@ -952,11 +949,11 @@ if suspicious_reports and suspicious_reports > 0:
 
 return True, "SURVIVABLE_ALPHA"
 
-==========================================
+# ==========================================
 
-TELEGRAM ALERT
+# TELEGRAM ALERT
 
-==========================================
+# ==========================================
 
 def build_telegram_message(
 symbol,
@@ -1116,11 +1113,11 @@ for _ in range(3):
 
 return False
 
-==========================================
+# ==========================================
 
-SQLITE LOGGING
+# SQLITE LOGGING
 
-==========================================
+# ==========================================
 
 def log_alert(
 mint,
@@ -1196,11 +1193,11 @@ with journal_db() as conn:
 
     conn.commit()
 
-==========================================
+# ==========================================
 
-STATE
+# STATE
 
-==========================================
+# ==========================================
 
 def set_scan_state(status=None, last_alerts=None, last_error=None):
 
@@ -1217,11 +1214,11 @@ with STATE_LOCK:
 
     LAST_SCAN_STATS["last_scan_at"] = datetime.now(timezone.utc).isoformat()
 
-==========================================
+# ==========================================
 
-POST-ALERT OUTCOME TRACKER
+# POST-ALERT OUTCOME TRACKER
 
-==========================================
+# ==========================================
 
 Queue: list of dicts {mint, symbol, alerted_at, price_at_alert, liq_at_alert, checks_remaining}
 
@@ -1351,11 +1348,11 @@ while True:
                 except ValueError:  
                     pass
 
-==========================================
+# ==========================================
 
-/outcomes ENDPOINT
+# /outcomes ENDPOINT
 
-==========================================
+# ==========================================
 
 @app.route("/outcomes")
 def outcomes():
