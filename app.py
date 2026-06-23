@@ -774,9 +774,9 @@ def journal_db():
 # ==========================================
 
 def cleanup_cache(now_ts):
-with CACHE_LOCK:
+  with CACHE_LOCK:
 
-expired = [  
+  expired = [  
         k for k, v in SENT_TOKENS.items()  
         if now_ts - v > COOLDOWN  
     ]  
@@ -798,7 +798,7 @@ expired = [
 
         logging.info("🧹 Cache trimmed")  
 
-    with STATE_LOCK:  
+      with STATE_LOCK:  
         LAST_SCAN_STATS["tracked_tokens"] = len(SENT_TOKENS)
 
 # ==========================================
