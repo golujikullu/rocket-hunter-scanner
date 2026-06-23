@@ -507,10 +507,10 @@ def build_session():
   s = requests.Session()
 
   s.headers.update({  
-     "User-Agent": "RocketHunterV2/1.0"  
+    "User-Agent": "RocketHunterV2/1.0"  
   })  
 
-   retry = Retry(  
+retry = Retry(  
      total=3,  
      connect=3,  
      read=3,  
@@ -520,16 +520,16 @@ def build_session():
      raise_on_status=False,  
    )  
 
-   adapter = HTTPAdapter(  
+adapter = HTTPAdapter(  
     max_retries=retry,  
     pool_connections=20,  
     pool_maxsize=20  
    )  
 
-   s.mount("https://", adapter)  
-   s.mount("http://", adapter)  
+s.mount("https://", adapter)  
+s.mount("http://", adapter)  
 
-   return s
+return s
 
 session = build_session()
 # ==========================================
