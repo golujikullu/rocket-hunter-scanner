@@ -1126,7 +1126,41 @@ def survival_stats():
             }
         return jsonify(result), 200
 
+@app.route("/analysis")
+def analysis():
+    """
+    Score-bucket के हिसaab se survival rate.
+    Batata hai: kya zyada conviction_score wale coins zyada tikte hain?
+    """
+    with journal_db() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
 
+        cur.execute("""
+            SELECT
+                CASE
+                    WHEN a.conviction_score >= 90 THEN '90-95'
+                    WHEN a.conviction_score >= 85 THEN '85-89'
+                    WHEN a.conviction_score >= 80 THEN '80-84'
+                    WHEN a.conviction_score >= 75 THEN '75-79'
+                    ELSE 'below-75'
+                END AS score_bucket,
+                o.check_window,
+                COUNT(*) AS total,
+                SUM(o.survived) AS survived,
+                ROUND(SUM(o.survived) * 100.0 / COUNT(*), 1) AS survival_rate,
+                ROUND(AVG(a.liquidity), 0) AS avg_liquidity_at_alert
+            FROM alerts a
+            JOIN alert_outcomes o
+              ON a.mint = o.mint AND a.symbol = o.symbol
+            WHERE a.label = 'sent'
+            GROUP BY score_bucket, o.check_window
+            ORDER BY o.check_window, score_bucket DESC
+        """)
+
+        rows = [dict(r) for r in cur.fetchall()]
+
+        return jsonify(rows), 200
 def scanner():
     init_journal_db()
 
