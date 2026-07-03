@@ -613,6 +613,13 @@ def init_journal_db():
         "ALTER TABLE coin_snapshots ADD COLUMN price REAL",
         "ALTER TABLE coin_snapshots ADD COLUMN volume REAL",
         "ALTER TABLE coin_snapshots ADD COLUMN fdv REAL",
+        "ALTER TABLE coin_snapshots ADD COLUMN buys INTEGER",
+        "ALTER TABLE coin_snapshots ADD COLUMN sells INTEGER",
+        "ALTER TABLE coin_snapshots ADD COLUMN sell_ratio REAL",
+        "ALTER TABLE coin_snapshots ADD COLUMN tx_count INTEGER",
+        # PHASE 6: 'buyers' column is DEPRECATED, not dropped. Older SQLite
+        # versions may not support DROP COLUMN — dropping it is not worth
+        # the risk. New code simply never reads or writes this column again.
     ]:
         try:
             cur.execute(alter_sql)
@@ -969,13 +976,18 @@ def log_alert(
 
 
 def fetch_snapshot_metrics(mint_address):
-    """Lightweight DexScreener fetch just for Historian snapshots."""
+    """
+    Lightweight DexScreener fetch for Historian snapshots.
+    Note: unique buyer count is intentionally NOT included — DexScreener
+    doesn't expose it (only GeckoTerminal does, used only in the main
+    scanner, not here). We don't invent or estimate it.
+    """
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{mint_address}"
         res = session.get(url, timeout=10)
 
         if res.status_code != 200:
-            return None, None, None, None
+            return None
 
         data = res.json() or {}
         pairs = data.get("pairs") or []
@@ -986,7 +998,7 @@ def fetch_snapshot_metrics(mint_address):
         ]
 
         if not solana_pairs:
-            return None, None, None, None
+            return None
 
         best = max(
             solana_pairs,
@@ -998,26 +1010,46 @@ def fetch_snapshot_metrics(mint_address):
         volume = float(best.get("volume", {}).get("m5") or 0)
         fdv = float(best.get("fdv") or 0)
 
-        return price, liquidity, volume, fdv
+        txns_m5 = (best.get("txns") or {}).get("m5") or {}
+        buys = int(txns_m5.get("buys") or 0)
+        sells = int(txns_m5.get("sells") or 0)
+        tx_count = buys + sells
+        sell_ratio = round(sells / buys, 3) if buys > 0 else None
+
+        return {
+            "price": price,
+            "liquidity": liquidity,
+            "volume": volume,
+            "fdv": fdv,
+            "buys": buys,
+            "sells": sells,
+            "sell_ratio": sell_ratio,
+            "tx_count": tx_count,
+        }
 
     except Exception:
         logging.exception("Snapshot fetch error")
-        return None, None, None, None
+        return None
 
 
-def record_snapshot(alert_id, mint, symbol, checkpoint, price, liquidity, volume, fdv, snapshot_time):
-    """Raw snapshot row — no calculation, just storage (Phase 2 scope)."""
+def record_snapshot(
+    alert_id, mint, symbol, checkpoint, price, liquidity, volume, fdv, snapshot_time,
+    buys=None, sells=None, sell_ratio=None, tx_count=None
+):
+    """Raw snapshot row — no calculation, just storage."""
     try:
         with journal_db() as conn:
             conn.execute("""
                 INSERT INTO coin_snapshots (
                     alert_id, mint, symbol, checkpoint,
-                    price, liquidity, volume, fdv, snapshot_time
+                    price, liquidity, volume, fdv, snapshot_time,
+                    buys, sells, sell_ratio, tx_count
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 alert_id, mint, symbol, checkpoint,
-                price, liquidity, volume, fdv, snapshot_time
+                price, liquidity, volume, fdv, snapshot_time,
+                buys, sells, sell_ratio, tx_count
             ))
             conn.commit()
     except Exception:
@@ -1062,9 +1094,19 @@ SNAPSHOT_WINDOWS = [
     ("60m", 60 * 60),
 ]
 
+# PHASE 4: peak tracking BETWEEN checkpoints, so a spike that comes and goes
+# between e.g. 15m and 30m isn't missed. Interval kept conservative (2 min)
+# to avoid hammering DexScreener with too many extra calls.
+PEAK_POLL_INTERVAL_SECONDS = int(os.getenv("PEAK_POLL_INTERVAL_SECONDS", "120"))
+
 
 def enqueue_outcome_tracking(mint, symbol, liq_at_alert, price_at_alert, alert_id=None):
     """Call this right after a successful alert send."""
+    try:
+        baseline_price = float(price_at_alert or 0)
+    except (TypeError, ValueError):
+        baseline_price = 0
+
     entry = {
         "mint": mint,
         "symbol": symbol,
@@ -1075,6 +1117,15 @@ def enqueue_outcome_tracking(mint, symbol, liq_at_alert, price_at_alert, alert_i
         "alert_id": alert_id,
         "checks_done": [],
         "snapshots_done": [],
+        "peak_price_seen": baseline_price if baseline_price > 0 else None,
+        "peak_seen_at": None,
+        "peak_liquidity_seen": None,
+        "peak_volume_seen": None,
+        "peak_buys_seen": None,
+        "peak_sells_seen": None,
+        "peak_sell_ratio_seen": None,
+        "peak_tx_count_seen": None,
+        "last_peak_poll_ts": 0,
     }
     with OUTCOME_LOCK:
         OUTCOME_QUEUE.append(entry)
@@ -1159,7 +1210,7 @@ def outcome_tracker():
                     logging.exception(f"Outcome check error: {entry['symbol']} [{label}]")
                     entry["checks_done"].append(label)
 
-            # PHASE 2: HISTORIAN — raw snapshot capture (no calculation here)
+            # PHASE 2/4: HISTORIAN — raw snapshot capture (no calculation here)
             for snap_label, snap_seconds in SNAPSHOT_WINDOWS:
                 if snap_label in entry.get("snapshots_done", []):
                     continue
@@ -1168,19 +1219,33 @@ def outcome_tracker():
                     continue
 
                 try:
-                    s_price, s_liq, s_vol, s_fdv = fetch_snapshot_metrics(entry["mint"])
+                    m = fetch_snapshot_metrics(entry["mint"])
 
-                    record_snapshot(
-                        entry.get("alert_id"),
-                        entry["mint"],
-                        entry["symbol"],
-                        snap_label,
-                        s_price,
-                        s_liq,
-                        s_vol,
-                        s_fdv,
-                        now_str
-                    )
+                    if m:
+                        record_snapshot(
+                            entry.get("alert_id"),
+                            entry["mint"],
+                            entry["symbol"],
+                            snap_label,
+                            m["price"], m["liquidity"], m["volume"], m["fdv"],
+                            now_str,
+                            m["buys"], m["sells"],
+                            m["sell_ratio"], m["tx_count"]
+                        )
+
+                        # Reuse this same reading to also check the peak —
+                        # no extra API call needed
+                        if m["price"]:
+                            current_peak = entry.get("peak_price_seen") or 0
+                            if m["price"] > current_peak:
+                                entry["peak_price_seen"] = m["price"]
+                                entry["peak_seen_at"] = now_str
+                                entry["peak_liquidity_seen"] = m["liquidity"]
+                                entry["peak_volume_seen"] = m["volume"]
+                                entry["peak_buys_seen"] = m["buys"]
+                                entry["peak_sells_seen"] = m["sells"]
+                                entry["peak_sell_ratio_seen"] = m["sell_ratio"]
+                                entry["peak_tx_count_seen"] = m["tx_count"]
 
                     entry["snapshots_done"].append(snap_label)
 
@@ -1189,6 +1254,32 @@ def outcome_tracker():
                 except Exception:
                     logging.exception(f"Snapshot error: {entry['symbol']} [{snap_label}]")
                     entry["snapshots_done"].append(snap_label)
+
+            # PHASE 4: peak tracking BETWEEN checkpoints
+            still_active = (
+                len(entry["checks_done"]) < len(CHECK_WINDOWS)
+                or len(entry.get("snapshots_done", [])) < len(SNAPSHOT_WINDOWS)
+            )
+
+            if still_active and (now_ts - entry.get("last_peak_poll_ts", 0)) >= PEAK_POLL_INTERVAL_SECONDS:
+                try:
+                    m = fetch_snapshot_metrics(entry["mint"])
+                    entry["last_peak_poll_ts"] = now_ts
+
+                    if m and m["price"]:
+                        current_peak = entry.get("peak_price_seen") or 0
+                        if m["price"] > current_peak:
+                            entry["peak_price_seen"] = m["price"]
+                            entry["peak_seen_at"] = now_str
+                            entry["peak_liquidity_seen"] = m["liquidity"]
+                            entry["peak_volume_seen"] = m["volume"]
+                            entry["peak_buys_seen"] = m["buys"]
+                            entry["peak_sells_seen"] = m["sells"]
+                            entry["peak_sell_ratio_seen"] = m["sell_ratio"]
+                            entry["peak_tx_count_seen"] = m["tx_count"]
+
+                except Exception:
+                    logging.exception(f"Peak poll error: {entry['symbol']}")
 
             if (
                 len(entry["checks_done"]) >= len(CHECK_WINDOWS)
@@ -1199,6 +1290,22 @@ def outcome_tracker():
         if to_remove:
             with OUTCOME_LOCK:
                 for e in to_remove:
+                    # PHASE 4: write the observed peak (between checkpoints) as its
+                    # own snapshot row, checkpoint="peak" — additive, doesn't
+                    # touch the normal 1m/5m/15m/30m/60m rows.
+                    if e.get("peak_price_seen"):
+                        record_snapshot(
+                            e.get("alert_id"), e["mint"], e["symbol"], "peak",
+                            e["peak_price_seen"],
+                            e.get("peak_liquidity_seen"),
+                            e.get("peak_volume_seen"),
+                            None,
+                            e.get("peak_seen_at") or now_str,
+                            e.get("peak_buys_seen"),
+                            e.get("peak_sells_seen"),
+                            e.get("peak_sell_ratio_seen"),
+                            e.get("peak_tx_count_seen"),
+                        )
                     try:
                         OUTCOME_QUEUE.remove(e)
                     except ValueError:
@@ -1255,9 +1362,189 @@ def survival_stats():
         return jsonify(result), 200
 
 
+@app.route("/analysis")
+def analysis():
+    """Score-bucket ke hisaab se survival rate."""
+    with journal_db() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT
+                CASE
+                    WHEN a.conviction_score >= 90 THEN '90-95'
+                    WHEN a.conviction_score >= 85 THEN '85-89'
+                    WHEN a.conviction_score >= 80 THEN '80-84'
+                    WHEN a.conviction_score >= 75 THEN '75-79'
+                    ELSE 'below-75'
+                END AS score_bucket,
+                o.check_window,
+                COUNT(*) AS total,
+                SUM(o.survived) AS survived,
+                ROUND(SUM(o.survived) * 100.0 / COUNT(*), 1) AS survival_rate,
+                ROUND(AVG(a.liquidity), 0) AS avg_liquidity_at_alert
+            FROM alerts a
+            JOIN alert_outcomes o
+              ON a.mint = o.mint AND a.symbol = o.symbol
+            WHERE a.label = 'sent'
+            GROUP BY score_bucket, o.check_window
+            ORDER BY o.check_window, score_bucket DESC
+        """)
+
+        rows = [dict(r) for r in cur.fetchall()]
+        return jsonify(rows), 200
+
+
+# ==========================================
+# PHASE 3: HISTORIAN — calculated metrics (on-the-fly, no new table yet)
+# ==========================================
+
+CHECKPOINT_ORDER = ["1m", "5m", "15m", "30m", "60m"]
+CHECKPOINT_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60}
+
+
+def compute_journal_metrics(alert_price, alerted_at, snapshots):
+    """
+    snapshots: list of dicts with keys checkpoint, price, liquidity, volume, fdv, snapshot_time
+    alerted_at: ISO timestamp string from alerts.timestamp — used to compute
+                real elapsed minutes to peak (not just the nominal checkpoint label).
+    Returns None if we don't have a usable baseline alert_price.
+    """
+    if not alert_price or alert_price <= 0:
+        return None
+
+    checkpoint_rows = {
+        s["checkpoint"]: s
+        for s in snapshots
+        if s.get("price") is not None
+    }
+
+    if not checkpoint_rows:
+        return None
+
+    # Peak = highest price seen anywhere — real checkpoints AND the
+    # PHASE 4 "peak" row (between-checkpoint spike tracking)
+    peak_checkpoint = max(checkpoint_rows, key=lambda cp: checkpoint_rows[cp]["price"])
+    peak_row = checkpoint_rows[peak_checkpoint]
+    peak_price = peak_row["price"]
+    peak_profit_pct = round((peak_price - alert_price) / alert_price * 100, 2)
+    peak_source = "between_checkpoints" if peak_checkpoint == "peak" else "checkpoint"
+
+    # PHASE 5: real elapsed minutes (works whether peak is a fixed
+    # checkpoint or the between-checkpoint "peak" row)
+    time_to_peak_min = None
+    try:
+        if alerted_at and peak_row.get("snapshot_time"):
+            t0 = datetime.fromisoformat(alerted_at)
+            t1 = datetime.fromisoformat(peak_row["snapshot_time"])
+            time_to_peak_min = round((t1 - t0).total_seconds() / 60, 1)
+    except Exception:
+        time_to_peak_min = None
+
+    # Profit % only for real time-based checkpoints (the synthetic "peak"
+    # row is excluded here — it's not a fixed time point)
+    profit_by_checkpoint = {
+        cp: round((checkpoint_rows[cp]["price"] - alert_price) / alert_price * 100, 2)
+        for cp in CHECKPOINT_ORDER
+        if cp in checkpoint_rows
+    }
+
+    # Max drawdown: biggest peak-to-trough % drop, walking checkpoints in order
+    running_peak = alert_price
+    max_drawdown_pct = 0.0
+    for cp in CHECKPOINT_ORDER:
+        row = checkpoint_rows.get(cp)
+        if row is None:
+            continue
+        price = row["price"]
+        if price > running_peak:
+            running_peak = price
+        drawdown = (price - running_peak) / running_peak * 100
+        if drawdown < max_drawdown_pct:
+            max_drawdown_pct = round(drawdown, 2)
+
+    # Final = latest real checkpoint we actually have data for
+    final_checkpoint = None
+    for cp in reversed(CHECKPOINT_ORDER):
+        if cp in checkpoint_rows:
+            final_checkpoint = cp
+            break
+
+    final_price = checkpoint_rows[final_checkpoint]["price"] if final_checkpoint else None
+
+    if final_checkpoint == "60m" and final_price is not None:
+        outcome = "Winner" if final_price >= alert_price * 0.5 else "Rug"
+    else:
+        outcome = "Active"
+
+    return {
+        "alert_price": alert_price,
+        "peak_price": peak_price,
+        "peak_checkpoint": peak_checkpoint,
+        "peak_source": peak_source,
+        "peak_profit_pct": peak_profit_pct,
+        "time_to_peak_min": time_to_peak_min,
+        "profit_by_checkpoint": profit_by_checkpoint,
+        "max_drawdown_pct": max_drawdown_pct,
+        "final_checkpoint": final_checkpoint,
+        "final_price": final_price,
+        "outcome": outcome,
+    }
+
+
+@app.route("/reason_stats")
+def reason_stats():
+    """Kaunsa reason tag zyada survival se juda hai (60m window par)."""
+    with journal_db() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT r.value AS reason,
+                   COUNT(*) AS total,
+                   SUM(o.survived) AS survived,
+                   ROUND(SUM(o.survived) * 100.0 / COUNT(*), 1) AS survival_rate
+            FROM alerts a
+            JOIN alert_outcomes o
+              ON a.mint = o.mint AND a.symbol = o.symbol AND o.check_window = '60m'
+            JOIN json_each(a.reasons_json) r
+            WHERE a.label = 'sent'
+            GROUP BY r.value
+            ORDER BY survival_rate DESC
+        """)
+
+        rows = [dict(r) for r in cur.fetchall()]
+        return jsonify(rows), 200
+
+
+@app.route("/penalty_stats")
+def penalty_stats():
+    """Kaunsa penalty tag zyada rug hone se juda hai (60m window par)."""
+    with journal_db() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT p.value AS penalty,
+                   COUNT(*) AS total,
+                   SUM(o.survived) AS survived,
+                   ROUND(SUM(o.survived) * 100.0 / COUNT(*), 1) AS survival_rate
+            FROM alerts a
+            JOIN alert_outcomes o
+              ON a.mint = o.mint AND a.symbol = o.symbol AND o.check_window = '60m'
+            JOIN json_each(a.penalties_json) p
+            WHERE a.label = 'sent'
+            GROUP BY p.value
+            ORDER BY survival_rate ASC
+        """)
+
+        rows = [dict(r) for r in cur.fetchall()]
+        return jsonify(rows), 200
+
+
 @app.route("/journal/<int:alert_id>")
 def journal_detail(alert_id):
-    """Phase 2: ek coin ki poori raw life-story — alert + uske saare snapshots."""
+    """Ek coin ki poori life-story — raw snapshots + calculated metrics."""
     with journal_db() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
@@ -1284,15 +1571,23 @@ def journal_detail(alert_id):
         """, (alert_id,))
         snapshots = [dict(r) for r in cur.fetchall()]
 
+        alert_dict = dict(alert_row)
+        metrics = compute_journal_metrics(
+            alert_dict.get("price_at_alert"),
+            alert_dict.get("timestamp"),
+            snapshots
+        )
+
         return jsonify({
-            "alert": dict(alert_row),
-            "snapshots": snapshots
+            "alert": alert_dict,
+            "snapshots": snapshots,
+            "metrics": metrics
         }), 200
 
 
 @app.route("/journal")
 def journal_list():
-    """Phase 2: sabse recent 'sent' alerts, jinke liye Historian data ban raha hai."""
+    """Sabse recent 'sent' alerts, jinke liye Historian data ban raha hai."""
     with journal_db() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
