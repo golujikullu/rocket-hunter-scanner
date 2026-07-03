@@ -602,6 +602,25 @@ def init_journal_db():
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_mint ON coin_snapshots(mint)")
 
+    # ==========================================
+    # PHASE 2: HISTORIAN — safe additive migration
+    # (existing columns/data untouched; new columns only)
+    # ==========================================
+    for alter_sql in [
+        "ALTER TABLE alerts ADD COLUMN price_at_alert REAL",
+        "ALTER TABLE coin_snapshots ADD COLUMN alert_id INTEGER",
+        "ALTER TABLE coin_snapshots ADD COLUMN checkpoint TEXT",
+        "ALTER TABLE coin_snapshots ADD COLUMN price REAL",
+        "ALTER TABLE coin_snapshots ADD COLUMN volume REAL",
+        "ALTER TABLE coin_snapshots ADD COLUMN fdv REAL",
+    ]:
+        try:
+            cur.execute(alter_sql)
+        except sqlite3.OperationalError:
+            pass  # column already exists — safe to ignore
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_alert_id ON coin_snapshots(alert_id)")
+
     conn.commit()
     conn.close()
 
@@ -922,24 +941,87 @@ def log_alert(
     conviction_score=0,
     reasons_json=None,
     penalties_json=None,
-    tx_source=None
+    tx_source=None,
+    price_at_alert=None
 ):
     with journal_db() as conn:
-        conn.execute("""
+        cur = conn.execute("""
             INSERT INTO alerts (
                 mint, symbol, timestamp, liquidity, volume, price_change,
                 age_hours, entry_label, buys, sells, buyers, suspicious,
                 fdv, shield_result, alert_sent, label, conviction_score,
-                reasons_json, penalties_json, tx_source
+                reasons_json, penalties_json, tx_source, price_at_alert
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             mint, symbol, ts, liquidity, volume, price_change,
             age_hours, entry_label, buys, sells, buyers, suspicious,
             fdv, shield_result, 1 if alert_sent else 0, label or "pending",
-            conviction_score, reasons_json, penalties_json, tx_source
+            conviction_score, reasons_json, penalties_json, tx_source, price_at_alert
         ))
         conn.commit()
+        return cur.lastrowid
+
+# ==========================================
+# PHASE 2: HISTORIAN — snapshot helpers
+# (independent of verify_on_dexscreener; scanner path untouched)
+# ==========================================
+
+
+def fetch_snapshot_metrics(mint_address):
+    """Lightweight DexScreener fetch just for Historian snapshots."""
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{mint_address}"
+        res = session.get(url, timeout=10)
+
+        if res.status_code != 200:
+            return None, None, None, None
+
+        data = res.json() or {}
+        pairs = data.get("pairs") or []
+
+        solana_pairs = [
+            p for p in pairs
+            if isinstance(p, dict) and p.get("chainId") == "solana"
+        ]
+
+        if not solana_pairs:
+            return None, None, None, None
+
+        best = max(
+            solana_pairs,
+            key=lambda x: float(x.get("liquidity", {}).get("usd") or 0)
+        )
+
+        price = float(best.get("priceUsd") or 0)
+        liquidity = float(best.get("liquidity", {}).get("usd") or 0)
+        volume = float(best.get("volume", {}).get("m5") or 0)
+        fdv = float(best.get("fdv") or 0)
+
+        return price, liquidity, volume, fdv
+
+    except Exception:
+        logging.exception("Snapshot fetch error")
+        return None, None, None, None
+
+
+def record_snapshot(alert_id, mint, symbol, checkpoint, price, liquidity, volume, fdv, snapshot_time):
+    """Raw snapshot row — no calculation, just storage (Phase 2 scope)."""
+    try:
+        with journal_db() as conn:
+            conn.execute("""
+                INSERT INTO coin_snapshots (
+                    alert_id, mint, symbol, checkpoint,
+                    price, liquidity, volume, fdv, snapshot_time
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                alert_id, mint, symbol, checkpoint,
+                price, liquidity, volume, fdv, snapshot_time
+            ))
+            conn.commit()
+    except Exception:
+        logging.exception(f"Snapshot save error: {symbol} [{checkpoint}]")
 
 # ==========================================
 # STATE
@@ -970,8 +1052,18 @@ CHECK_WINDOWS = [
     ("60m", 60 * 60),
 ]
 
+# PHASE 2: Historian snapshot checkpoints (separate from CHECK_WINDOWS above,
+# so existing alert_outcomes / survival_stats logic stays untouched)
+SNAPSHOT_WINDOWS = [
+    ("1m", 60),
+    ("5m", 5 * 60),
+    ("15m", 15 * 60),
+    ("30m", 30 * 60),
+    ("60m", 60 * 60),
+]
 
-def enqueue_outcome_tracking(mint, symbol, liq_at_alert, price_at_alert):
+
+def enqueue_outcome_tracking(mint, symbol, liq_at_alert, price_at_alert, alert_id=None):
     """Call this right after a successful alert send."""
     entry = {
         "mint": mint,
@@ -980,7 +1072,9 @@ def enqueue_outcome_tracking(mint, symbol, liq_at_alert, price_at_alert):
         "alerted_ts": time.time(),
         "liq_at_alert": liq_at_alert,
         "price_at_alert": price_at_alert or "0",
+        "alert_id": alert_id,
         "checks_done": [],
+        "snapshots_done": [],
     }
     with OUTCOME_LOCK:
         OUTCOME_QUEUE.append(entry)
@@ -1065,7 +1159,41 @@ def outcome_tracker():
                     logging.exception(f"Outcome check error: {entry['symbol']} [{label}]")
                     entry["checks_done"].append(label)
 
-            if len(entry["checks_done"]) >= len(CHECK_WINDOWS):
+            # PHASE 2: HISTORIAN — raw snapshot capture (no calculation here)
+            for snap_label, snap_seconds in SNAPSHOT_WINDOWS:
+                if snap_label in entry.get("snapshots_done", []):
+                    continue
+
+                if elapsed < snap_seconds:
+                    continue
+
+                try:
+                    s_price, s_liq, s_vol, s_fdv = fetch_snapshot_metrics(entry["mint"])
+
+                    record_snapshot(
+                        entry.get("alert_id"),
+                        entry["mint"],
+                        entry["symbol"],
+                        snap_label,
+                        s_price,
+                        s_liq,
+                        s_vol,
+                        s_fdv,
+                        now_str
+                    )
+
+                    entry["snapshots_done"].append(snap_label)
+
+                    logging.info(f"📸 Snapshot [{snap_label}] {entry['symbol']} saved")
+
+                except Exception:
+                    logging.exception(f"Snapshot error: {entry['symbol']} [{snap_label}]")
+                    entry["snapshots_done"].append(snap_label)
+
+            if (
+                len(entry["checks_done"]) >= len(CHECK_WINDOWS)
+                and len(entry.get("snapshots_done", [])) >= len(SNAPSHOT_WINDOWS)
+            ):
                 to_remove.append(entry)
 
         if to_remove:
@@ -1126,41 +1254,61 @@ def survival_stats():
             }
         return jsonify(result), 200
 
-@app.route("/analysis")
-def analysis():
-    """
-    Score-bucket के हिसaab se survival rate.
-    Batata hai: kya zyada conviction_score wale coins zyada tikte hain?
-    """
+
+@app.route("/journal/<int:alert_id>")
+def journal_detail(alert_id):
+    """Phase 2: ek coin ki poori raw life-story — alert + uske saare snapshots."""
+    with journal_db() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,))
+        alert_row = cur.fetchone()
+
+        if not alert_row:
+            return jsonify({"error": "alert_id not found"}), 404
+
+        cur.execute("""
+            SELECT checkpoint, price, liquidity, volume, fdv, snapshot_time
+            FROM coin_snapshots
+            WHERE alert_id = ?
+            ORDER BY
+                CASE checkpoint
+                    WHEN '1m' THEN 1
+                    WHEN '5m' THEN 2
+                    WHEN '15m' THEN 3
+                    WHEN '30m' THEN 4
+                    WHEN '60m' THEN 5
+                    ELSE 6
+                END
+        """, (alert_id,))
+        snapshots = [dict(r) for r in cur.fetchall()]
+
+        return jsonify({
+            "alert": dict(alert_row),
+            "snapshots": snapshots
+        }), 200
+
+
+@app.route("/journal")
+def journal_list():
+    """Phase 2: sabse recent 'sent' alerts, jinke liye Historian data ban raha hai."""
     with journal_db() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT
-                CASE
-                    WHEN a.conviction_score >= 90 THEN '90-95'
-                    WHEN a.conviction_score >= 85 THEN '85-89'
-                    WHEN a.conviction_score >= 80 THEN '80-84'
-                    WHEN a.conviction_score >= 75 THEN '75-79'
-                    ELSE 'below-75'
-                END AS score_bucket,
-                o.check_window,
-                COUNT(*) AS total,
-                SUM(o.survived) AS survived,
-                ROUND(SUM(o.survived) * 100.0 / COUNT(*), 1) AS survival_rate,
-                ROUND(AVG(a.liquidity), 0) AS avg_liquidity_at_alert
-            FROM alerts a
-            JOIN alert_outcomes o
-              ON a.mint = o.mint AND a.symbol = o.symbol
-            WHERE a.label = 'sent'
-            GROUP BY score_bucket, o.check_window
-            ORDER BY o.check_window, score_bucket DESC
+            SELECT id, mint, symbol, timestamp, price_at_alert, conviction_score
+            FROM alerts
+            WHERE label = 'sent'
+            ORDER BY id DESC
+            LIMIT 30
         """)
-
         rows = [dict(r) for r in cur.fetchall()]
 
         return jsonify(rows), 200
+
+
 def scanner():
     init_journal_db()
 
@@ -1363,15 +1511,20 @@ def scanner():
                         with CACHE_LOCK:
                             SENT_TOKENS[mint_address] = now_ts
 
-                        log_alert(
+                        price_at_alert_val = float(_price_usd or 0)
+
+                        new_alert_id = log_alert(
                             mint_address, symbol, datetime.utcnow().isoformat(),
                             gecko_liq, volume, price_change, age_hours, entry_label,
                             buys, sells, buyers, suspicious, fdv,
                             shield_reason, True, "sent", conviction_score,
-                            json.dumps(reasons), json.dumps(penalties), tx_label
+                            json.dumps(reasons), json.dumps(penalties), tx_label,
+                            price_at_alert_val
                         )
 
-                        enqueue_outcome_tracking(mint_address, symbol, real_liq, _price_usd)
+                        enqueue_outcome_tracking(
+                            mint_address, symbol, real_liq, _price_usd, new_alert_id
+                        )
 
                         alerts += 1
                         time.sleep(3)
