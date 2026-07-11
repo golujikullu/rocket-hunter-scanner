@@ -961,7 +961,7 @@ def log_alert(
                 fdv, shield_result, alert_sent, label, conviction_score,
                 reasons_json, penalties_json, tx_source, price_at_alert
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             mint, symbol, ts, liquidity, volume, price_change,
             age_hours, entry_label, buys, sells, buyers, suspicious,
