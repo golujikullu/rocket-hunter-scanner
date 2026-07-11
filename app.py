@@ -512,8 +512,7 @@ def init_journal_db():
     conn = sqlite3.connect(JOURNAL_DB, timeout=30)
     cur = conn.cursor()
 
-    cur.execute("PRAGMA journal_mode=WAL;")
-    cur.execute("PRAGMA synchronous=NORMAL;")
+    
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS alerts (
@@ -634,10 +633,9 @@ def init_journal_db():
 
 @contextmanager
 def journal_db():
-    conn = sqlite3.connect(JOURNAL_DB, timeout=30)
+    conn = psycopg.connect(DATABASE_URL)
     try:
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
+        
         yield conn
     finally:
         conn.close()
