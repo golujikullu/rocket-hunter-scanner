@@ -4,6 +4,10 @@ import time
 import random
 import sqlite3
 import psycopg
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+
 import logging
 import threading
 import requests
