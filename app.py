@@ -951,7 +951,7 @@ def log_alert(
             conviction_score, reasons_json, penalties_json, tx_source, price_at_alert
         ))
         conn.commit()
-        return cur.lastrowid
+        return None
 
 # ==========================================
 # PHASE 2: HISTORIAN — snapshot helpers
