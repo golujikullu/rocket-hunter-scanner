@@ -1650,7 +1650,155 @@ def journal_list():
 
         return jsonify(rows), 200
 
+# ==========================================
+# /peak_report ENDPOINT — Aggregate Peak Analytics
+# ==========================================
 
+PROFIT_THRESHOLDS = [20, 50, 100, 200, 500]
+SCORE_BUCKETS = [95, 90, 85, 80, 75]
+
+
+def _score_bucket(score):
+    for b in SCORE_BUCKETS:
+        if score >= b:
+            return b
+    return None
+
+
+@app.route("/peak_report")
+def peak_report():
+    with journal_db() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT a.id AS alert_id, a.symbol, a.timestamp, a.price_at_alert,
+                   a.conviction_score
+            FROM alerts a
+            WHERE a.label = 'sent'
+              AND a.price_at_alert IS NOT NULL
+              AND a.price_at_alert > 0
+              AND EXISTS (
+                    SELECT 1 FROM coin_snapshots s
+                    WHERE s.alert_id = a.id
+                      AND s.checkpoint = '60m'
+              )
+        """)
+
+        alert_rows = [dict(r) for r in cur.fetchall()]
+        results = []
+
+        for a in alert_rows:
+            cur.execute("""
+                SELECT checkpoint, price, liquidity, volume, fdv, snapshot_time
+                FROM coin_snapshots
+                WHERE alert_id = ?
+            """, (a["alert_id"],))
+
+            snapshots = [dict(r) for r in cur.fetchall()]
+
+            metrics = compute_journal_metrics(
+                a["price_at_alert"],
+                a["timestamp"],
+                snapshots
+            )
+
+            if metrics is None:
+                continue
+
+            results.append({
+                "alert_id": a["alert_id"],
+                "symbol": a["symbol"],
+                "score": a["conviction_score"],
+                "score_bucket": _score_bucket(
+                    a["conviction_score"] or 0
+                ),
+                "peak_profit_pct": metrics["peak_profit_pct"],
+                "time_to_peak_min": metrics["time_to_peak_min"],
+                "outcome": metrics["outcome"],
+            })
+
+    total_completed = len(results)
+
+    threshold_counts = {}
+
+    for t in PROFIT_THRESHOLDS:
+        count = sum(
+            1 for r in results
+            if r["peak_profit_pct"] is not None
+            and r["peak_profit_pct"] >= t
+        )
+
+        threshold_counts[f"+{t}%"] = {
+            "count": count,
+            "pct_of_total": round(
+                count * 100.0 / total_completed, 1
+            ) if total_completed else 0
+        }
+
+    valid_times = [
+        r["time_to_peak_min"]
+        for r in results
+        if r["time_to_peak_min"] is not None
+    ]
+
+    median_time_to_peak = (
+        round(statistics.median(valid_times), 1)
+        if valid_times else None
+    )
+
+    bucket_report = {}
+
+    for b in SCORE_BUCKETS:
+        bucket_rows = [
+            r for r in results
+            if r["score_bucket"] == b
+        ]
+
+        n = len(bucket_rows)
+        bucket_thresholds = {}
+
+        for t in PROFIT_THRESHOLDS:
+            count = sum(
+                1 for r in bucket_rows
+                if r["peak_profit_pct"] is not None
+                and r["peak_profit_pct"] >= t
+            )
+
+            bucket_thresholds[f"+{t}%"] = {
+                "count": count,
+                "pct_of_bucket": round(
+                    count * 100.0 / n, 1
+                ) if n else 0
+            }
+
+        bucket_times = [
+            r["time_to_peak_min"]
+            for r in bucket_rows
+            if r["time_to_peak_min"] is not None
+        ]
+
+        bucket_median_time = (
+            round(statistics.median(bucket_times), 1)
+            if bucket_times else None
+        )
+
+        bucket_report[str(b)] = {
+            "sample_size": n,
+            "thresholds": bucket_thresholds,
+            "median_time_to_peak_min": bucket_median_time,
+            "note": (
+                "sample too small — treat with caution"
+                if n < 30 else None
+            )
+        }
+
+    return jsonify({
+        "total_completed_records": total_completed,
+        "overall_thresholds": threshold_counts,
+        "overall_median_time_to_peak_min": median_time_to_peak,
+        "score_bucket_breakdown": bucket_report
+    }), 200
 def scanner():
     init_journal_db()
 
