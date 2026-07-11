@@ -3,10 +3,10 @@ import json
 import time
 import random
 import sqlite3
+import psycopg
 import logging
 import threading
 import requests
-
 from flask import Flask, jsonify
 from threading import Thread
 from datetime import datetime, timezone
