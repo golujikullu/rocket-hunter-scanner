@@ -1331,17 +1331,17 @@ def outcomes():
 @app.route("/survival_stats")
 def survival_stats():
     with journal_db() as conn:
-    cur = conn.cursor()
+        cur = conn.cursor()
 
-    cur.execute("""
-        ...
+        cur.execute("""
+         ...
         GROUP BY check_window
-    """)
+        """)
 
-    rows = cur.fetchall()
+        rows = cur.fetchall()
 
-    result = {}
-    for r in rows:
+        result = {}
+        for r in rows:
         window, total, surv, avg_p, avg_l = r
         result[window] = {
             "total": total,
@@ -1349,9 +1349,9 @@ def survival_stats():
             "survival_rate": round(surv / total * 100, 1) if total else 0,
             "avg_price_chg": avg_p,
             "avg_liq_chg": avg_l,
-        }
+         }
 
-    return jsonify(result), 200
+        return jsonify(result), 200
 
 
 @app.route("/analysis")
