@@ -609,17 +609,17 @@ def init_journal_db():
             snapshot_time TEXT
         )
     """)
-        cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS alert_id BIGINT")
-        cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS checkpoint TEXT")
-        cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS price REAL")
-        cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS volume REAL")
-        cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS fdv REAL")
-        cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS buys INTEGER")
-        cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS sells INTEGER")
-        cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS sell_ratio REAL")
-        cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS tx_count INTEGER")
+    cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS alert_id BIGINT")
+    cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS checkpoint TEXT")
+    cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS price REAL")
+    cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS volume REAL")
+    cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS fdv REAL")
+    cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS buys INTEGER")
+    cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS sells INTEGER")
+    cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS sell_ratio REAL")
+    cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS tx_count INTEGER")
 
-        cur.execute(
+    cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_snapshots_mint ON coin_snapshots(mint)"
         )
 
