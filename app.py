@@ -962,7 +962,7 @@ def log_alert(
         ))
         new_alert_id = cur.fetchone()[0]
         conn.commit()
-return new_alert_id
+        return new_alert_id
 
 # ==========================================
 # PHASE 2: HISTORIAN — snapshot helpers
