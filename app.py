@@ -1380,11 +1380,11 @@ def analysis():
                 ROUND(AVG(a.liquidity)::numeric, 0) AS avg_liquidity_at_alert
             FROM alerts a
             JOIN alert_outcomes o
-              ON a.mint = o.mint AND a.symbol = o.symbol
+            ON a.mint = o.mint AND a.symbol = o.symbol
             WHERE a.label = 'sent'
             GROUP BY score_bucket, o.check_window
             ORDER BY o.check_window, score_bucket DESC
-        """)
+          """)
 
           rows = cur.fetchall()     
           return jsonify(rows), 200
