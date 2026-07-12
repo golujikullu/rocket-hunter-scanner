@@ -618,9 +618,10 @@ def init_journal_db():
         cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS sells INTEGER")
         cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS sell_ratio REAL")
         cur.execute("ALTER TABLE coin_snapshots ADD COLUMN IF NOT EXISTS tx_count INTEGER")
+
         cur.execute(
-        "CREATE INDEX IF NOT EXISTS idx_snapshots_mint ON coin_snapshots(mint)"
-    )
+            "CREATE INDEX IF NOT EXISTS idx_snapshots_mint ON coin_snapshots(mint)"
+        )
 
     conn.commit()
     conn.close()
