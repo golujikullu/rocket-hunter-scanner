@@ -1182,7 +1182,7 @@ def outcome_tracker():
                                 check_window, liq_at_alert, liq_at_check,
                                 liq_change_pct, price_at_alert, price_at_check,
                                 price_change_pct, survived, outcome_label
-                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         """, (
                             entry["mint"], entry["symbol"], entry["alerted_at"],
                             now_str, label, liq_alert, real_liq,
