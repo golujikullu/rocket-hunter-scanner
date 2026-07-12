@@ -1362,9 +1362,9 @@ def analysis():
     """Score-bucket ke hisaab se survival rate."""
     with journal_db() as conn:
         
-      cur = conn.cursor()
+         cur = conn.cursor()
 
-      cur.execute("""
+         cur.execute("""
             SELECT
                 CASE
                     WHEN a.conviction_score >= 90 THEN '90-95'
@@ -1386,8 +1386,8 @@ def analysis():
             ORDER BY o.check_window, score_bucket DESC
         """)
 
-            rows = cur.fetchall()     
-            return jsonify(rows), 200
+          rows = cur.fetchall()     
+          return jsonify(rows), 200
 
 @app.route("/score_report")
 def score_report():
