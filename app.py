@@ -953,15 +953,17 @@ def log_alert(
                 fdv, shield_result, alert_sent, label, conviction_score,
                 reasons_json, penalties_json, tx_source, price_at_alert
             )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
+                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (           
             mint, symbol, ts, liquidity, volume, price_change,
             age_hours, entry_label, buys, sells, buyers, suspicious,
             fdv, shield_result, 1 if alert_sent else 0, label or "pending",
             conviction_score, reasons_json, penalties_json, tx_source, price_at_alert
         ))
-        conn.commit()
-        return None
+        new_alert_id = cur.fetchone()[0]
+conn.commit()
+return new_alert_id
 
 # ==========================================
 # PHASE 2: HISTORIAN — snapshot helpers
