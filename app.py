@@ -1331,9 +1331,9 @@ def outcomes():
 @app.route("/survival_stats")
 def survival_stats():
     with journal_db() as conn:
-        cur = conn.cursor()
+      cur = conn.cursor()
 
-        cur.execute("""
+      cur.execute("""
             SELECT check_window,
                    COUNT(*) as total,
                    SUM(survived) as survived,
@@ -1342,7 +1342,7 @@ def survival_stats():
             FROM alert_outcomes
             GROUP BY check_window
         """)
-        rows = cur.fetchall()
+     rows = cur.fetchall()
 
         result = {}
         for r in rows:
@@ -1384,10 +1384,10 @@ def analysis():
             WHERE a.label = 'sent'
             GROUP BY score_bucket, o.check_window
             ORDER BY o.check_window, score_bucket DESC
-          """)
+         """)
 
-          rows = cur.fetchall()     
-          return jsonify(rows), 200
+         rows = cur.fetchall()     
+         return jsonify(rows), 200
 
 @app.route("/score_report")
 def score_report():
