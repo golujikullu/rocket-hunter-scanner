@@ -1334,25 +1334,33 @@ def survival_stats():
         cur = conn.cursor()
 
         cur.execute("""
-         ...
-        GROUP BY check_window
+            SELECT
+                check_window,
+                COUNT(*) AS total,
+                SUM(survived) AS survived,
+                ROUND(AVG(price_change_pct), 1) AS avg_price_chg,
+                ROUND(AVG(liq_change_pct), 1) AS avg_liq_chg
+            FROM alert_outcomes
+            GROUP BY check_window
+            ORDER BY check_window
         """)
 
         rows = cur.fetchall()
 
         result = {}
+
         for r in rows:
-        window, total, surv, avg_p, avg_l = r
-        result[window] = {
-            "total": total,
-            "survived": surv,
-            "survival_rate": round(surv / total * 100, 1) if total else 0,
-            "avg_price_chg": avg_p,
-            "avg_liq_chg": avg_l,
-         }
+            window, total, surv, avg_p, avg_l = r
+
+            result[window] = {
+                "total": total,
+                "survived": surv,
+                "survival_rate": round((surv / total) * 100, 1) if total else 0,
+                "avg_price_chg": avg_p,
+                "avg_liq_chg": avg_l,
+            }
 
         return jsonify(result), 200
-
 
 @app.route("/analysis")
 def analysis():
