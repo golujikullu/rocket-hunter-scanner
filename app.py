@@ -961,7 +961,7 @@ def log_alert(
             conviction_score, reasons_json, penalties_json, tx_source, price_at_alert
         ))
         new_alert_id = cur.fetchone()[0]
-conn.commit()
+        conn.commit()
 return new_alert_id
 
 # ==========================================
