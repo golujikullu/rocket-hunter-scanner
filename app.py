@@ -4,7 +4,8 @@ import time
 import random
 import sqlite3
 import psycopg
-
+from psycopg.rows 
+import dict_row
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 
@@ -1038,7 +1039,7 @@ def record_snapshot(
                     price, liquidity, volume, fdv, snapshot_time,
                     buys, sells, sell_ratio, tx_count
                 )
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 alert_id, mint, symbol, checkpoint,
                 price, liquidity, volume, fdv, snapshot_time,
