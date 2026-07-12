@@ -1382,7 +1382,7 @@ def analysis():
                 COUNT(*) AS total,
                 SUM(o.survived) AS survived,
                 ROUND(SUM(o.survived) * 100.0 / COUNT(*), 1) AS survival_rate,
-                ROUND(AVG(a.liquidity), 0) AS avg_liquidity_at_alert
+                AVG(a.liquidity) AS avg_liquidity_at_alert
             FROM alerts a
             JOIN alert_outcomes o
             ON a.mint = o.mint AND a.symbol = o.symbol
