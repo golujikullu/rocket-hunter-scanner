@@ -1386,7 +1386,7 @@ def analysis():
             ORDER BY o.check_window, score_bucket DESC
         """)
 
-        rows = [dict(r) for r in cur.fetchall()]
+   rows = cur.fetchall()     
         return jsonify(rows), 200
 
 @app.route("/score_report")
