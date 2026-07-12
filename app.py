@@ -4,8 +4,7 @@ import time
 import random
 import sqlite3
 import psycopg
-from psycopg.rows 
-import dict_row
+from psycopg.rows import dict_row
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 
