@@ -1397,49 +1397,48 @@ def analysis():
 @app.route("/score_report")
 def score_report():
     """
-    Survival breakdown grouped by conviction score buckets.
+    Survival breakdown grouped by conviction score.
     Read-only analytics endpoint.
     """
-
     with journal_db() as conn:
-        conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
         cur.execute("""
             SELECT
                 CASE
-                    WHEN a.conviction_score >= 95 THEN 95
-                    WHEN a.conviction_score >= 90 THEN 90
-                    WHEN a.conviction_score >= 85 THEN 85
-                    WHEN a.conviction_score >= 80 THEN 80
-                    WHEN a.conviction_score >= 75 THEN 75
+                    WHEN a.conviction_score >= 95 THEN '95+'
+                    WHEN a.conviction_score >= 90 THEN '90-94'
+                    WHEN a.conviction_score >= 85 THEN '85-89'
+                    WHEN a.conviction_score >= 80 THEN '80-84'
+                    WHEN a.conviction_score >= 75 THEN '75-79'
                     ELSE NULL
                 END AS score,
 
                 COUNT(*) AS total,
                 SUM(o.survived) AS survived,
-                COUNT(*) - SUM(o.survived) AS rugged,
+                COUNT(*) - SUM(o.survived) AS failed,
 
                 ROUND(
-                    SUM(o.survived) * 100.0 / COUNT(*),
+                    CAST(SUM(o.survived) * 100.0 / COUNT(*) AS NUMERIC),
                     1
                 ) AS survival_rate
 
             FROM alerts a
 
             JOIN alert_outcomes o
-              ON a.mint = o.mint
-             AND a.symbol = o.symbol
+                ON a.mint = o.mint
+                AND a.symbol = o.symbol
 
             WHERE a.label = 'sent'
-              AND o.check_window = '60m'
-              AND a.conviction_score >= 75
+                AND o.check_window = '60m'
+                AND a.conviction_score >= 75
 
             GROUP BY score
             ORDER BY score DESC
         """)
 
-        rows = [dict(r) for r in cur.fetchall()]
+        columns = [desc[0] for desc in cur.description]
+        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
 
         return jsonify(rows), 200
 # ==========================================
