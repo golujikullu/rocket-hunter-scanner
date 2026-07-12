@@ -1338,8 +1338,8 @@ def survival_stats():
                 check_window,
                 COUNT(*) AS total,
                 SUM(survived) AS survived,
-                ROUND(AVG(price_change_pct), 1) AS avg_price_chg,
-                ROUND(AVG(liq_change_pct), 1) AS avg_liq_chg
+                ROUND(AVG(price_change_pct)::numeric, 1) AS avg_price_chg,
+                ROUND(AVG(liq_change_pct)::numeric, 1) AS avg_liq_chg
             FROM alert_outcomes
             GROUP BY check_window
             ORDER BY check_window
