@@ -1076,6 +1076,7 @@ OUTCOME_LOCK = threading.Lock()
 CHECK_WINDOWS = [
     ("5m", 5 * 60),
     ("15m", 15 * 60),
+    ("30m", 30 * 60),
     ("60m", 60 * 60),
 ]
 
