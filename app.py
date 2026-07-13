@@ -1945,26 +1945,27 @@ def failed_peak_crosscheck():
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT a.id AS alert_id,
-                   a.symbol,
-                   a.timestamp,
-                   a.price_at_alert,
-                   a.conviction_score
-            FROM alerts a
-            JOIN alert_outcomes o
-              ON a.mint = o.mint
-             AND a.symbol = o.symbol
-            WHERE a.label = 'sent'
-              AND a.price_at_alert IS NOT NULL
-              AND a.price_at_alert > 0
-              AND o.check_window = '60m'
-              AND COALESCE(o.survived, 0) = 0
-              AND EXISTS (
-                    SELECT 1
-                    FROM coin_snapshots s
-                    WHERE s.alert_id = a.id
-                      AND s.checkpoint = '60m'
-              )
+SELECT
+    a.id AS alert_id,
+    a.symbol,
+    a.timestamp,
+    CAST(a.price_at_alert AS DOUBLE PRECISION) AS price_at_alert,
+    a.conviction_score
+FROM alerts a
+JOIN alert_outcomes o
+    ON a.mint = o.mint
+   AND a.symbol = o.symbol
+WHERE a.label = 'sent'
+  AND a.price_at_alert IS NOT NULL
+  AND CAST(a.price_at_alert AS DOUBLE PRECISION) > 0
+  AND o.check_window = '60m'
+  AND COALESCE(o.survived, 0) = 0
+  AND EXISTS (
+      SELECT 1
+      FROM coin_snapshots s
+      WHERE s.alert_id = a.id
+        AND s.checkpoint = '60m'
+  )
         """)
 
         failed_rows = [dict(r) for r in cur.fetchall()]
