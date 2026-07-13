@@ -1798,6 +1798,127 @@ def peak_report():
         "overall_thresholds": threshold_counts,
         "overall_median_time_to_peak_min": median_time_to_peak,
         "score_bucket_breakdown": bucket_report
+        }), 200
+
+# ==========================================
+# SCORE x WINDOW REPORT
+# ==========================================
+MIN_CONFIDENT_SAMPLE = 30
+
+SCORE_WINDOW_BUCKETS = [
+    (95, 999, "95+"),
+    (90, 94, "90-94"),
+    (85, 89, "85-89"),
+    (80, 84, "80-84"),
+    (75, 79, "75-79"),
+]
+
+REPORT_WINDOWS = ["5m", "15m", "30m", "60m"]
+
+
+@app.route("/score_window_report")
+def score_window_report():
+    """
+    Score Bucket x Window matrix.
+
+    Windows:
+    5m  = early momentum
+    15m = continuation
+    30m = meme peak zone
+    60m = survival
+
+    Read-only calibration analytics.
+    """
+
+    with journal_db() as conn:
+        cur = conn.cursor()
+
+        report = {}
+
+        for low, high, label in SCORE_WINDOW_BUCKETS:
+            report[label] = {}
+
+            for window in REPORT_WINDOWS:
+                cur.execute("""
+                    SELECT
+                        COUNT(*) AS total,
+                        COALESCE(SUM(o.survived), 0) AS survived
+                    FROM alerts a
+                    JOIN alert_outcomes o
+                      ON a.mint = o.mint
+                     AND a.symbol = o.symbol
+                    WHERE a.label = 'sent'
+                      AND a.conviction_score >= %s
+                      AND a.conviction_score <= %s
+                      AND o.check_window = %s
+                """, (low, high, window))
+
+                row = cur.fetchone()
+
+                total = row[0] or 0
+                survived = row[1] or 0
+
+                survival_pct = (
+                    round(survived * 100.0 / total, 1)
+                    if total else None
+                )
+
+                report[label][window] = {
+                    "total_n": total,
+                    "survived": survived,
+                    "survival_pct": survival_pct,
+                    "confidence": (
+                        "low_confidence"
+                        if total < MIN_CONFIDENT_SAMPLE
+                        else "sufficient_sample"
+                    ),
+                    "note": (
+                        f"n={total} < {MIN_CONFIDENT_SAMPLE} — "
+                        "treat as directional, not conclusive"
+                        if total < MIN_CONFIDENT_SAMPLE
+                        else None
+                    )
+                }
+
+        # ------------------------------------------
+        # Overall calibration status
+        # 100 clean 60m outcomes required
+        # ------------------------------------------
+
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM alerts a
+            JOIN alert_outcomes o
+              ON a.mint = o.mint
+             AND a.symbol = o.symbol
+            WHERE a.label = 'sent'
+              AND o.check_window = %s
+        """, ("60m",))
+
+        row = cur.fetchone()
+        total_60m = row[0] or 0
+
+    return jsonify({
+        "matrix": report,
+        "windows": REPORT_WINDOWS,
+        "window_meaning": {
+            "5m": "early_momentum",
+            "15m": "continuation",
+            "30m": "meme_peak_zone",
+            "60m": "survival"
+        },
+        "total_60m_outcomes": total_60m,
+        "calibration_target": 100,
+        "calibration_mode": total_60m < 100,
+        "calibration_note": (
+            f"Only {total_60m}/100 clean 60m outcomes so far — "
+            "Score is NOT the final judge yet. "
+            "Data is witness, Score is accused."
+            if total_60m < 100
+            else
+            "100+ clean 60m outcomes reached — "
+            "matrix can now inform Panchayat rule review."
+        )
     }), 200
 def scanner():
     init_journal_db()
