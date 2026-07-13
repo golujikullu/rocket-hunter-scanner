@@ -1919,7 +1919,164 @@ def score_window_report():
             "100+ clean 60m outcomes reached — "
             "matrix can now inform Panchayat rule review."
         )
-    }), 200
+        }), 200
+
+
+# ============================================================
+# FAILED / RUGGED COINS PEAK CROSS-CHECK
+# Read-only analytics only.
+# Core scanner / shield / scoring untouched.
+# ============================================================
+
+@app.route("/failed_peak_crosscheck")
+def failed_peak_crosscheck():
+    """
+    Cross-check 60m failed/rugged outcomes against peak history.
+
+    Question:
+    How many coins that failed survival at 60m had already reached
+    +50% or +100% peak profit before the 60m checkpoint?
+
+    Read-only evidence layer.
+    """
+
+    with journal_db() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT a.id AS alert_id,
+                   a.symbol,
+                   a.timestamp,
+                   a.price_at_alert,
+                   a.conviction_score
+            FROM alerts a
+            JOIN alert_outcomes o
+              ON a.mint = o.mint
+             AND a.symbol = o.symbol
+            WHERE a.label = 'sent'
+              AND a.price_at_alert IS NOT NULL
+              AND a.price_at_alert > 0
+              AND o.check_window = '60m'
+              AND COALESCE(o.survived, 0) = 0
+              AND EXISTS (
+                    SELECT 1
+                    FROM coin_snapshots s
+                    WHERE s.alert_id = a.id
+                      AND s.checkpoint = '60m'
+              )
+        """)
+
+        failed_rows = [dict(r) for r in cur.fetchall()]
+        results = []
+
+        for a in failed_rows:
+            cur.execute("""
+                SELECT checkpoint,
+                       price,
+                       liquidity,
+                       timestamp
+                FROM coin_snapshots
+                WHERE alert_id = ?
+            """, (a["alert_id"],))
+
+            snapshots = [dict(r) for r in cur.fetchall()]
+
+            metrics = compute_journal_metrics(
+                a["price_at_alert"],
+                a["timestamp"],
+                snapshots
+            )
+
+            if metrics is None:
+                continue
+
+            results.append({
+                "alert_id": a["alert_id"],
+                "symbol": a["symbol"],
+                "score": a["conviction_score"],
+                "peak_profit_pct": metrics["peak_profit_pct"],
+                "time_to_peak_min": metrics["time_to_peak_min"],
+                "outcome": metrics["outcome"]
+            })
+
+        total_failed = len(results)
+
+        reached_50 = sum(
+            1 for r in results
+            if r["peak_profit_pct"] is not None
+            and r["peak_profit_pct"] >= 50
+        )
+
+        reached_100 = sum(
+            1 for r in results
+            if r["peak_profit_pct"] is not None
+            and r["peak_profit_pct"] >= 100
+        )
+
+        reached_200 = sum(
+            1 for r in results
+            if r["peak_profit_pct"] is not None
+            and r["peak_profit_pct"] >= 200
+        )
+
+        valid_times = [
+            r["time_to_peak_min"]
+            for r in results
+            if r["time_to_peak_min"] is not None
+        ]
+
+        median_time_to_peak = (
+            round(statistics.median(valid_times), 1)
+            if valid_times else None
+        )
+
+        pct_50 = (
+            round(reached_50 * 100.0 / total_failed, 1)
+            if total_failed else 0
+        )
+
+        pct_100 = (
+            round(reached_100 * 100.0 / total_failed, 1)
+            if total_failed else 0
+        )
+
+        pct_200 = (
+            round(reached_200 * 100.0 / total_failed, 1)
+            if total_failed else 0
+        )
+
+        interpretation = (
+            "strong evidence: Hunter behaves like an early momentum detector"
+            if pct_50 >= 70
+            else
+            "evidence not yet strong enough to redefine Hunter"
+        )
+
+        return jsonify({
+            "report": "60m failed/rugged coins vs earlier peak history",
+            "calibration_mode": True,
+            "core_logic_changed": False,
+            "total_60m_failed": total_failed,
+            "failed_but_reached_50pct": {
+                "count": reached_50,
+                "pct_of_failed": pct_50
+            },
+            "failed_but_reached_100pct": {
+                "count": reached_100,
+                "pct_of_failed": pct_100
+            },
+            "failed_but_reached_200pct": {
+                "count": reached_200,
+                "pct_of_failed": pct_200
+            },
+            "median_time_to_peak_min": median_time_to_peak,
+            "interpretation": interpretation,
+            "constitutional_note": (
+                "Score is not yet a Survival Predictor. "
+                "Cross-analysis tests whether it is an Early Momentum Detector."
+            )
+        }), 200
 def scanner():
     init_journal_db()
 
