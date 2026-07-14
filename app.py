@@ -629,8 +629,8 @@ def init_journal_db():
 @contextmanager
 def journal_db():
     conn = psycopg.connect(DATABASE_URL)
+    conn.row_factory = dict_row
     try:
-        
         yield conn
     finally:
         conn.close()
