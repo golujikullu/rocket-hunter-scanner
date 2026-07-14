@@ -7,7 +7,7 @@ import psycopg
 from psycopg.rows import dict_row
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-
+import statistics
 import logging
 import threading
 import requests
@@ -1927,137 +1927,115 @@ def score_window_report():
 # Read-only analytics only.
 # Core scanner / shield / scoring untouched.
 # ============================================================
-
 @app.route("/failed_peak_crosscheck")
 def failed_peak_crosscheck():
     """
     Cross-check 60m failed/rugged outcomes against peak history.
-
-    Question:
-    How many coins that failed survival at 60m had already reached
-    +50% or +100% peak profit before the 60m checkpoint?
-
-    Read-only evidence layer.
     """
 
     with journal_db() as conn:
-        
         cur = conn.cursor()
 
         cur.execute("""
-SELECT
-    a.id AS alert_id,
-    a.symbol,
-    a.timestamp,
-    CAST(a.price_at_alert AS DOUBLE PRECISION) AS price_at_alert,
-    a.conviction_score
-FROM alerts a
-JOIN alert_outcomes o
-    ON a.mint = o.mint
-   AND a.symbol = o.symbol
-WHERE a.label = 'sent'
-  AND a.price_at_alert IS NOT NULL
-  AND CAST(a.price_at_alert AS DOUBLE PRECISION) > 0
-  AND o.check_window = '60m'
-  AND COALESCE(o.survived, 0) = 0
-  AND EXISTS (
-      SELECT 1
-      FROM coin_snapshots s
-      WHERE s.alert_id = a.id
-        AND s.checkpoint = '60m'
-  )
+            SELECT
+                a.id AS alert_id,
+                a.symbol,
+                a.timestamp,
+                CAST(a.price_at_alert AS DOUBLE PRECISION) AS price_at_alert,
+                a.conviction_score
+            FROM alerts a
+            JOIN alert_outcomes o
+              ON a.mint = o.mint
+             AND a.symbol = o.symbol
+            WHERE a.label = 'sent'
+              AND a.price_at_alert IS NOT NULL
+              AND CAST(a.price_at_alert AS DOUBLE PRECISION) > 0
+              AND o.check_window = '60m'
+              AND COALESCE(o.survived,0)=0
+              AND EXISTS (
+                    SELECT 1
+                    FROM coin_snapshots s
+                    WHERE s.alert_id = a.id
+                      AND s.checkpoint='60m'
+              )
         """)
 
         failed_rows = [dict(r) for r in cur.fetchall()]
         results = []
 
         for a in failed_rows:
-            sql = """
-SELECT checkpoint,
-       price,
-       liquidity,
-       timestamp
-FROM coin_snapshots
-WHERE alert_id = ?
-"""
 
-print("SQL =", repr(sql))
-print("alert_id =", a["alert_id"])
+        cur.execute("""
+                SELECT
+                    checkpoint,
+                    price,
+                    liquidity,
+                    volume,
+                    fdv,
+                    snapshot_time
+                FROM coin_snapshots
+                WHERE alert_id = %s
+            """, (a["alert_id"],))
 
-cur.execute(sql, (a["alert_id"],))
-                
+        snapshots = [dict(r) for r in cur.fetchall()]
 
-    snapshots = [dict(r) for r in cur.fetchall()]
+        metrics = compute_journal_metrics(
+                a["price_at_alert"],
+                a["timestamp"],
+                snapshots
+            )
 
-    metrics = compute_journal_metrics(
-    a["price_at_alert"],
-    a["timestamp"],
-    snapshots
-    )
+       if metrics is None:
+                continue
 
-    if metrics is None:
-       continue
+       results.append({
+                "alert_id": a["alert_id"],
+                "symbol": a["symbol"],
+                "score": a["conviction_score"],
+                "peak_profit_pct": metrics["peak_profit_pct"],
+                "time_to_peak_min": metrics["time_to_peak_min"],
+                "outcome": metrics["outcome"]
+            })
 
-    results.append({
-      "alert_id": a["alert_id"],
-      "symbol": a["symbol"],
-      "score": a["conviction_score"],
-      "peak_profit_pct": metrics["peak_profit_pct"],
-      "time_to_peak_min": metrics["time_to_peak_min"],
-      "outcome": metrics["outcome"]
-      })
+      total_failed = len(results)
 
-        total_failed = len(results)
-
-        reached_50 = sum(
+      reached_50 = sum(
             1 for r in results
             if r["peak_profit_pct"] is not None
             and r["peak_profit_pct"] >= 50
         )
 
-        reached_100 = sum(
+      reached_100 = sum(
             1 for r in results
             if r["peak_profit_pct"] is not None
             and r["peak_profit_pct"] >= 100
         )
 
-        reached_200 = sum(
+      reached_200 = sum(
             1 for r in results
             if r["peak_profit_pct"] is not None
             and r["peak_profit_pct"] >= 200
         )
 
-        valid_times = [
+      valid_times = [
             r["time_to_peak_min"]
             for r in results
             if r["time_to_peak_min"] is not None
         ]
 
-        median_time_to_peak = (
+      median_time_to_peak = (
             round(statistics.median(valid_times), 1)
             if valid_times else None
         )
 
-        pct_50 = (
-            round(reached_50 * 100.0 / total_failed, 1)
-            if total_failed else 0
-        )
+      pct_50 = round(reached_50 * 100.0 / total_failed, 1) if total_failed else 0
+      pct_100 = round(reached_100 * 100.0 / total_failed, 1) if total_failed else 0
+      pct_200 = round(reached_200 * 100.0 / total_failed, 1) if total_failed else 0
 
-        pct_100 = (
-            round(reached_100 * 100.0 / total_failed, 1)
-            if total_failed else 0
-        )
-
-        pct_200 = (
-            round(reached_200 * 100.0 / total_failed, 1)
-            if total_failed else 0
-        )
-
-        interpretation = (
+      interpretation = (
             "strong evidence: Hunter behaves like an early momentum detector"
             if pct_50 >= 70
-            else
-            "evidence not yet strong enough to redefine Hunter"
+            else "evidence not yet strong enough to redefine Hunter"
         )
 
         return jsonify({
@@ -2084,6 +2062,8 @@ cur.execute(sql, (a["alert_id"],))
                 "Cross-analysis tests whether it is an Early Momentum Detector."
             )
         }), 200
+
+
 def scanner():
     init_journal_db()
 
