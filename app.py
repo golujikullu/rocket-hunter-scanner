@@ -960,7 +960,7 @@ def log_alert(
             fdv, shield_result, 1 if alert_sent else 0, label or "pending",
             conviction_score, reasons_json, penalties_json, tx_source, price_at_alert
         ))
-        new_alert_id = cur.fetchone()[0]
+        new_alert_id = cur.fetchone()["id"]
         conn.commit()
         return new_alert_id
 
