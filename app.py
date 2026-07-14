@@ -1963,7 +1963,7 @@ def failed_peak_crosscheck():
         failed_rows = [dict(r) for r in cur.fetchall()]
         results = []
 
-        for a in failed_rows:
+     for a in failed_rows:
 
         cur.execute("""
                 SELECT
@@ -1985,8 +1985,8 @@ def failed_peak_crosscheck():
                 snapshots
             )
 
-            if metrics is None:
-                continue
+    if metrics is None:
+      continue
 
             results.append({
                 "alert_id": a["alert_id"],
