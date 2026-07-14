@@ -1977,18 +1977,18 @@ def failed_peak_crosscheck():
                 WHERE alert_id = %s
             """, (a["alert_id"],))
 
-        snapshots = [dict(r) for r in cur.fetchall()]
+            snapshots = [dict(r) for r in cur.fetchall()]
 
-        metrics = compute_journal_metrics(
+            metrics = compute_journal_metrics(
                 a["price_at_alert"],
                 a["timestamp"],
                 snapshots
             )
 
-       if metrics is None:
+            if metrics is None:
                 continue
 
-       results.append({
+            results.append({
                 "alert_id": a["alert_id"],
                 "symbol": a["symbol"],
                 "score": a["conviction_score"],
@@ -1997,31 +1997,31 @@ def failed_peak_crosscheck():
                 "outcome": metrics["outcome"]
             })
 
-      total_failed = len(results)
+            total_failed = len(results)
 
-      reached_50 = sum(
+            reached_50 = sum(
             1 for r in results
             if r["peak_profit_pct"] is not None
             and r["peak_profit_pct"] >= 50
-        )
+            )
 
-      reached_100 = sum(
+            reached_100 = sum(
             1 for r in results
             if r["peak_profit_pct"] is not None
             and r["peak_profit_pct"] >= 100
-        )
+            )
 
-      reached_200 = sum(
+            reached_200 = sum(
             1 for r in results
             if r["peak_profit_pct"] is not None
             and r["peak_profit_pct"] >= 200
-        )
+            )
 
-      valid_times = [
+             valid_times = [
             r["time_to_peak_min"]
             for r in results
             if r["time_to_peak_min"] is not None
-        ]
+            ]
 
       median_time_to_peak = (
             round(statistics.median(valid_times), 1)
