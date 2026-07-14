@@ -1987,25 +1987,25 @@ print("alert_id =", a["alert_id"])
 cur.execute(sql, (a["alert_id"],))
                 
 
-            snapshots = [dict(r) for r in cur.fetchall()]
+    snapshots = [dict(r) for r in cur.fetchall()]
 
-            metrics = compute_journal_metrics(
-                a["price_at_alert"],
-                a["timestamp"],
-                snapshots
-            )
+    metrics = compute_journal_metrics(
+    a["price_at_alert"],
+    a["timestamp"],
+    snapshots
+    )
 
-            if metrics is None:
-                continue
+    if metrics is None:
+       continue
 
-            results.append({
-                "alert_id": a["alert_id"],
-                "symbol": a["symbol"],
-                "score": a["conviction_score"],
-                "peak_profit_pct": metrics["peak_profit_pct"],
-                "time_to_peak_min": metrics["time_to_peak_min"],
-                "outcome": metrics["outcome"]
-            })
+    results.append({
+      "alert_id": a["alert_id"],
+      "symbol": a["symbol"],
+      "score": a["conviction_score"],
+      "peak_profit_pct": metrics["peak_profit_pct"],
+      "time_to_peak_min": metrics["time_to_peak_min"],
+      "outcome": metrics["outcome"]
+      })
 
         total_failed = len(results)
 
