@@ -1972,14 +1972,20 @@ WHERE a.label = 'sent'
         results = []
 
         for a in failed_rows:
-            cur.execute("""
-                SELECT checkpoint,
-                       price,
-                       liquidity,
-                       timestamp
-                FROM coin_snapshots
-                WHERE alert_id = ?
-            """, (a["alert_id"],))
+            sql = """
+SELECT checkpoint,
+       price,
+       liquidity,
+       timestamp
+FROM coin_snapshots
+WHERE alert_id = ?
+"""
+
+print("SQL =", repr(sql))
+print("alert_id =", a["alert_id"])
+
+cur.execute(sql, (a["alert_id"],))
+                
 
             snapshots = [dict(r) for r in cur.fetchall()]
 
