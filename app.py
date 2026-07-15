@@ -1294,50 +1294,65 @@ def outcome_tracker():
                     logging.exception(f"Outcome check error: {entry['symbol']} [{label}]")
                     entry["checks_done"].append(label)
 
-            # PHASE 2/4: HISTORIAN — raw snapshot capture (no calculation here)
-            for snap_label, snap_seconds in SNAPSHOT_WINDOWS:
-                if snap_label in entry.get("snapshots_done", []):
+                    # PHASE 2/4: HISTORIAN — raw snapshot capture
+        for snap_label, snap_seconds in SNAPSHOT_WINDOWS:
+            if snap_label in entry.get("snapshots_done", []):
+                continue
+
+            if elapsed < snap_seconds:
+                continue
+
+            try:
+                m = fetch_snapshot_metrics(entry["mint"])
+
+                if not m:
+                    logging.warning(
+                        f"📸 Snapshot metrics unavailable: "
+                        f"{entry['symbol']} [{snap_label}] — retry pending"
+                    )
                     continue
 
-                if elapsed < snap_seconds:
-                    continue
+                record_snapshot(
+                    entry.get("alert_id"),
+                    entry["mint"],
+                    entry["symbol"],
+                    snap_label,
+                    m["price"],
+                    m["liquidity"],
+                    now_str,
+                    m["buys"],
+                    m["sells"],
+                    m["sell_ratio"],
+                    m["tx_count"],
+                )
 
-                try:
-                    m = fetch_snapshot_metrics(entry["mint"])
+                # Reuse this same reading to also update peak state.
+                # No extra API call needed.
+                if m["price"]:
+                    current_peak = entry.get("peak_price_seen") or 0
 
-                    if m:
-                        record_snapshot(
-                            entry.get("alert_id"),
-                            entry["mint"],
-                            entry["symbol"],
-                            snap_label,
-                            m["price"], m["liquidity"], m["volume"], m["fdv"],
-                            now_str,
-                            m["buys"], m["sells"],
-                            m["sell_ratio"], m["tx_count"]
-                        )
+                    if m["price"] > current_peak:
+                        entry["peak_price_seen"] = m["price"]
+                        entry["peak_seen_at"] = now_str
+                        entry["peak_liquidity_seen"] = m["liquidity"]
+                        entry["peak_volume_seen"] = m.get("volume", 0)
+                        entry["peak_buys_seen"] = m["buys"]
+                        entry["peak_sells_seen"] = m["sells"]
+                        entry["peak_sell_ratio_seen"] = m["sell_ratio"]
+                        entry["peak_tx_count_seen"] = m["tx_count"]
 
-                        # Reuse this same reading to also check the peak —
-                        # no extra API call needed
-                        if m["price"]:
-                            current_peak = entry.get("peak_price_seen") or 0
-                            if m["price"] > current_peak:
-                                entry["peak_price_seen"] = m["price"]
-                                entry["peak_seen_at"] = now_str
-                                entry["peak_liquidity_seen"] = m["liquidity"]
-                                entry["peak_volume_seen"] = m["volume"]
-                                entry["peak_buys_seen"] = m["buys"]
-                                entry["peak_sells_seen"] = m["sells"]
-                                entry["peak_sell_ratio_seen"] = m["sell_ratio"]
-                                entry["peak_tx_count_seen"] = m["tx_count"]
+                # Mark done ONLY after successful snapshot save
+                entry.setdefault("snapshots_done", []).append(snap_label)
 
-                    entry["snapshots_done"].append(snap_label)
+                logging.info(
+                    f"📸 Snapshot [{snap_label}] saved: {entry['symbol']}"
+                )
 
-                    logging.info(f"📸 Snapshot [{snap_label}] {entry['symbol']} saved")
-
-                except Exception:
-                    logging.exception(f"Snapshot error: {entry['symbol']} [{snap_label}]")
-                    entry["snapshots_done"].append(snap_label)
+            except Exception:
+                logging.exception(
+                    f"Snapshot error: {entry['symbol']} [{snap_label}] "
+                    f"— retry pending"
+                )
 
             # PHASE 4: peak tracking BETWEEN checkpoints
             still_active = (
