@@ -654,8 +654,8 @@ def peak_decay_matrix():
                 COUNT(*) AS sample_n,
                 AVG(
                     CASE
-                        WHEN a.price > 0 AND cs.price > 0
-                        THEN ((cs.price - a.price) / a.price) * 100.0
+                        WHEN CAST(a.price_at_alert AS DOUBLE PRECISION) > 0 AND cs.price > 0
+THEN ((cs.price - CAST(a.price_at_alert AS DOUBLE PRECISION)) / CAST(a.price_at_alert AS DOUBLE PRECISION)) * 100
                         ELSE NULL
                     END
                 ) AS avg_return_pct,
