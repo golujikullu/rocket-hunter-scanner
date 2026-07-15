@@ -1931,6 +1931,7 @@ def score_window_report():
 def failed_peak_crosscheck():
     """
     Cross-check 60m failed/rugged outcomes against peak history.
+    Read-only analytics only.
     """
 
     with journal_db() as conn:
@@ -1951,21 +1952,20 @@ def failed_peak_crosscheck():
               AND a.price_at_alert IS NOT NULL
               AND CAST(a.price_at_alert AS DOUBLE PRECISION) > 0
               AND o.check_window = '60m'
-              AND COALESCE(o.survived,0)=0
+              AND COALESCE(o.survived, 0) = 0
               AND EXISTS (
                     SELECT 1
                     FROM coin_snapshots s
                     WHERE s.alert_id = a.id
-                      AND s.checkpoint='60m'
+                      AND s.checkpoint = '60m'
               )
         """)
 
         failed_rows = [dict(r) for r in cur.fetchall()]
         results = []
 
-     for a in failed_rows:
-
-        cur.execute("""
+        for a in failed_rows:
+            cur.execute("""
                 SELECT
                     checkpoint,
                     price,
@@ -1985,8 +1985,8 @@ def failed_peak_crosscheck():
                 snapshots
             )
 
-    if metrics is None:
-      continue
+            if metrics is None:
+                continue
 
             results.append({
                 "alert_id": a["alert_id"],
@@ -1997,71 +1997,83 @@ def failed_peak_crosscheck():
                 "outcome": metrics["outcome"]
             })
 
-            total_failed = len(results)
+    total_failed = len(results)
 
-            reached_50 = sum(
-            1 for r in results
-            if r["peak_profit_pct"] is not None
-            and r["peak_profit_pct"] >= 50
-            )
+    reached_50 = sum(
+        1 for r in results
+        if r["peak_profit_pct"] is not None
+        and r["peak_profit_pct"] >= 50
+    )
 
-            reached_100 = sum(
-            1 for r in results
-            if r["peak_profit_pct"] is not None
-            and r["peak_profit_pct"] >= 100
-            )
+    reached_100 = sum(
+        1 for r in results
+        if r["peak_profit_pct"] is not None
+        and r["peak_profit_pct"] >= 100
+    )
 
-            reached_200 = sum(
-            1 for r in results
-            if r["peak_profit_pct"] is not None
-            and r["peak_profit_pct"] >= 200
-            )
+    reached_200 = sum(
+        1 for r in results
+        if r["peak_profit_pct"] is not None
+        and r["peak_profit_pct"] >= 200
+    )
 
-             valid_times = [
-            r["time_to_peak_min"]
-            for r in results
-            if r["time_to_peak_min"] is not None
-            ]
+    valid_times = [
+        r["time_to_peak_min"]
+        for r in results
+        if r["time_to_peak_min"] is not None
+    ]
 
-      median_time_to_peak = (
-            round(statistics.median(valid_times), 1)
-            if valid_times else None
+    median_time_to_peak = (
+        round(statistics.median(valid_times), 1)
+        if valid_times else None
+    )
+
+    pct_50 = (
+        round(reached_50 * 100.0 / total_failed, 1)
+        if total_failed else 0
+    )
+
+    pct_100 = (
+        round(reached_100 * 100.0 / total_failed, 1)
+        if total_failed else 0
+    )
+
+    pct_200 = (
+        round(reached_200 * 100.0 / total_failed, 1)
+        if total_failed else 0
+    )
+
+    interpretation = (
+        "strong evidence: Hunter behaves like an early momentum detector"
+        if pct_50 >= 70
+        else "evidence not yet strong enough to redefine Hunter"
+    )
+
+    return jsonify({
+        "report": "60m failed/rugged coins vs earlier peak history",
+        "calibration_mode": True,
+        "core_logic_changed": False,
+        "total_60m_failed": total_failed,
+        "failed_but_reached_50pct": {
+            "count": reached_50,
+            "pct_of_failed": pct_50
+        },
+        "failed_but_reached_100pct": {
+            "count": reached_100,
+            "pct_of_failed": pct_100
+        },
+        "failed_but_reached_200pct": {
+            "count": reached_200,
+            "pct_of_failed": pct_200
+        },
+        "median_time_to_peak_min": median_time_to_peak,
+        "interpretation": interpretation,
+        "constitutional_note": (
+            "Score is not yet a Survival Predictor. "
+            "Cross-analysis tests whether it is an Early Momentum Detector."
         )
+    }), 200
 
-      pct_50 = round(reached_50 * 100.0 / total_failed, 1) if total_failed else 0
-      pct_100 = round(reached_100 * 100.0 / total_failed, 1) if total_failed else 0
-      pct_200 = round(reached_200 * 100.0 / total_failed, 1) if total_failed else 0
-
-      interpretation = (
-            "strong evidence: Hunter behaves like an early momentum detector"
-            if pct_50 >= 70
-            else "evidence not yet strong enough to redefine Hunter"
-        )
-
-        return jsonify({
-            "report": "60m failed/rugged coins vs earlier peak history",
-            "calibration_mode": True,
-            "core_logic_changed": False,
-            "total_60m_failed": total_failed,
-            "failed_but_reached_50pct": {
-                "count": reached_50,
-                "pct_of_failed": pct_50
-            },
-            "failed_but_reached_100pct": {
-                "count": reached_100,
-                "pct_of_failed": pct_100
-            },
-            "failed_but_reached_200pct": {
-                "count": reached_200,
-                "pct_of_failed": pct_200
-            },
-            "median_time_to_peak_min": median_time_to_peak,
-            "interpretation": interpretation,
-            "constitutional_note": (
-                "Score is not yet a Survival Predictor. "
-                "Cross-analysis tests whether it is an Early Momentum Detector."
-            )
-        }), 200
 
 
 def scanner():
