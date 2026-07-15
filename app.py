@@ -634,7 +634,91 @@ def journal_db():
         yield conn
     finally:
         conn.close()
+# ============================================================
+# PEAK & DECAY MATRIX — READ ONLY
+# Exit Grid: 5,10,15,20,25,30,40,50,60 Minutes
+# ============================================================
 
+@app.route("/peak_decay_matrix")
+def peak_decay_matrix():
+
+    exit_grid = ["5m", "10m", "15m", "20m", "25m",
+                 "30m", "40m", "50m", "60m"]
+
+    with journal_db() as conn:
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT
+                cs.checkpoint,
+                COUNT(*) AS sample_n,
+                AVG(
+                    CASE
+                        WHEN a.price > 0 AND cs.price > 0
+                        THEN ((cs.price - a.price) / a.price) * 100.0
+                        ELSE NULL
+                    END
+                ) AS avg_return_pct,
+
+                PERCENTILE_CONT(0.5) WITHIN GROUP (
+                    ORDER BY
+                    CASE
+                        WHEN a.price > 0 AND cs.price > 0
+                        THEN ((cs.price - a.price) / a.price) * 100.0
+                        ELSE NULL
+                    END
+                ) AS median_return_pct,
+
+                AVG(cs.liquidity) AS avg_liquidity,
+                AVG(cs.sell_ratio) AS avg_sell_ratio
+
+            FROM coin_snapshots cs
+            JOIN alerts a
+                ON a.id = cs.alert_id
+
+            WHERE cs.checkpoint = ANY(%s)
+
+            GROUP BY cs.checkpoint
+        """, (exit_grid,))
+
+        rows = cur.fetchall()
+
+    order_map = {
+        "5m": 5,
+        "10m": 10,
+        "15m": 15,
+        "20m": 20,
+        "25m": 25,
+        "30m": 30,
+        "40m": 40,
+        "50m": 50,
+        "60m": 60,
+    }
+
+    result = []
+
+    for row in rows:
+        result.append({
+            "checkpoint": row["checkpoint"],
+            "sample_n": row["sample_n"],
+            "avg_return_pct": round(float(row["avg_return_pct"] or 0), 2),
+            "median_return_pct": round(float(row["median_return_pct"] or 0), 2),
+            "avg_liquidity": round(float(row["avg_liquidity"] or 0), 2),
+            "avg_sell_ratio": round(float(row["avg_sell_ratio"] or 0), 2),
+        })
+
+    result.sort(key=lambda x: order_map.get(x["checkpoint"], 999))
+
+    return jsonify({
+        "mode": "READ_ONLY",
+        "core_logic_changed": False,
+        "exit_grid_minutes": [5, 10, 15, 20, 25, 30, 40, 50, 60],
+        "matrix": result,
+        "interpretation": (
+            "Fixed hold-time simulated return matrix. "
+            "Used to identify safe exit window."
+        )
+    }), 200
 # ==========================================
 # CACHE CLEANUP
 # ==========================================
