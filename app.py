@@ -1313,18 +1313,20 @@ def outcome_tracker():
                     continue
 
                 record_snapshot(
-                    entry.get("alert_id"),
-                    entry["mint"],
-                    entry["symbol"],
-                    snap_label,
-                    m["price"],
-                    m["liquidity"],
-                    now_str,
-                    m["buys"],
-                    m["sells"],
-                    m["sell_ratio"],
-                    m["tx_count"],
-                )
+    entry.get("alert_id"),
+    entry["mint"],
+    entry["symbol"],
+    snap_label,
+    m["price"],
+    m["liquidity"],
+    m.get("volume"),
+    m.get("fdv"),
+    now_str,
+    m["buys"],
+    m["sells"],
+    m["sell_ratio"],
+    m["tx_count"],
+)
 
                 # Reuse this same reading to also update peak state.
                 # No extra API call needed.
