@@ -1418,7 +1418,7 @@ def outcome_tracker():
 @app.route("/outcomes")
 def outcomes():
     with journal_db() as conn:
-        conn.row_factory = sqlite3.Row
+        
         cur = conn.cursor()
         cur.execute("""
             SELECT symbol, check_window,
@@ -1646,7 +1646,7 @@ def compute_journal_metrics(alert_price, alerted_at, snapshots):
 def reason_stats():
     """Kaunsa reason tag zyada survival se juda hai (60m window par)."""
     with journal_db() as conn:
-        conn.row_factory = sqlite3.Row
+        
         cur = conn.cursor()
 
         cur.execute("""
@@ -1671,7 +1671,7 @@ def reason_stats():
 def penalty_stats():
     """Kaunsa penalty tag zyada rug hone se juda hai (60m window par)."""
     with journal_db() as conn:
-        conn.row_factory = sqlite3.Row
+        
         cur = conn.cursor()
 
         cur.execute("""
@@ -1696,7 +1696,7 @@ def penalty_stats():
 def journal_detail(alert_id):
     """Ek coin ki poori life-story — raw snapshots + calculated metrics."""
     with journal_db() as conn:
-        conn.row_factory = sqlite3.Row
+        
         cur = conn.cursor()
 
         cur.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,))
@@ -1739,7 +1739,7 @@ def journal_detail(alert_id):
 def journal_list():
     """Sabse recent 'sent' alerts, jinke liye Historian data ban raha hai."""
     with journal_db() as conn:
-        conn.row_factory = sqlite3.Row
+        
         cur = conn.cursor()
 
         cur.execute("""
@@ -1771,7 +1771,7 @@ def _score_bucket(score):
 @app.route("/peak_report")
 def peak_report():
     with journal_db() as conn:
-        conn.row_factory = sqlite3.Row
+        
         cur = conn.cursor()
 
         cur.execute("""
