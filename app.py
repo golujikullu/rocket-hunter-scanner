@@ -425,8 +425,8 @@ def stats():
     with journal_db() as conn:
         cur = conn.cursor()
 
-        cur.execute("SELECT COUNT(*) FROM alerts")
-        total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) AS count FROM alerts")
+        total = cur.fetchone()["count"]
 
         cur.execute("SELECT COUNT(*) FROM alerts WHERE label='sent'")
         sent = cur.fetchone()[0]
