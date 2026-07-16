@@ -428,14 +428,14 @@ def stats():
         cur.execute("SELECT COUNT(*) AS count FROM alerts")
         total = cur.fetchone()["count"]
 
-        cur.execute("SELECT COUNT(*) FROM alerts WHERE label='sent'")
-        sent = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) AS count FROM alerts WHERE label='sent'")
+        sent = cur.fetchone()["count"]
 
-        cur.execute("SELECT COUNT(*) FROM alerts WHERE label='blocked'")
-        blocked = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) AS count FROM alerts WHERE label='blocked'")
+        blocked = cur.fetchone()["count"]
 
-        cur.execute("SELECT COUNT(*) FROM alerts WHERE label='rejected'")
-        rejected = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) AS count FROM alerts WHERE label='rejected'")
+        rejected = cur.fetchone()["count"]
 
         return jsonify({
             "total_logged": total,
