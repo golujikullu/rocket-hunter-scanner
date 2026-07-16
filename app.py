@@ -448,7 +448,7 @@ def stats():
 @app.route("/recent")
 def recent():
     with journal_db() as conn:
-        conn.row_factory = sqlite3.Row
+        
         cur = conn.cursor()
 
         cur.execute("""
