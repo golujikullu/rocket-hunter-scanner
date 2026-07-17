@@ -1114,7 +1114,7 @@ def fetch_snapshot_metrics(mint_address):
 def record_snapshot(
     alert_id, mint, symbol, checkpoint, price, liquidity, volume, fdv, snapshot_time,
     buys=None, sells=None, sell_ratio=None, tx_count=None
-):
+    ):
     """Raw snapshot row — no calculation, just storage."""
     try:
         with journal_db() as conn:
