@@ -1234,7 +1234,7 @@ def outcome_tracker():
 
         to_remove = []
 
-        for entry in queue_copy:
+            for entry in queue_copy:
             elapsed = now_ts - entry["alerted_ts"]
 
             for label, seconds in CHECK_WINDOWS:
@@ -1298,7 +1298,7 @@ def outcome_tracker():
                     entry["checks_done"].append(label)
 
                     # PHASE 2/4: HISTORIAN — raw snapshot capture
-        for snap_label, snap_seconds in SNAPSHOT_WINDOWS:
+            for snap_label, snap_seconds in SNAPSHOT_WINDOWS:
             if snap_label in entry.get("snapshots_done", []):
                 continue
 
