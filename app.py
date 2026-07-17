@@ -1220,7 +1220,7 @@ def enqueue_outcome_tracking(mint, symbol, liq_at_alert, price_at_alert, alert_i
 
 
 def outcome_tracker():
-    """Background thread — checks queued alerts at 5m / 15m / 60m."""
+    """Background thread — checks queued alerts and captures Historian snapshots."""
     logging.info("📋 Outcome Tracker started")
 
     while True:
@@ -1234,10 +1234,16 @@ def outcome_tracker():
 
         to_remove = []
 
-            for entry in queue_copy:
+        for entry in queue_copy:
+
             elapsed = now_ts - entry["alerted_ts"]
 
+            # ==========================================
+            # PHASE 1 — OUTCOME CHECKS
+            # ==========================================
+
             for label, seconds in CHECK_WINDOWS:
+
                 if label in entry["checks_done"]:
                     continue
 
@@ -1245,9 +1251,12 @@ def outcome_tracker():
                     continue
 
                 try:
-                    real_liq, dex_url, price_now = verify_on_dexscreener(entry["mint"])
+                    real_liq, dex_url, price_now = verify_on_dexscreener(
+                        entry["mint"]
+                    )
 
                     liq_alert = entry["liq_at_alert"] or 1
+
                     liq_change_pct = (
                         (real_liq - liq_alert) / liq_alert * 100
                         if liq_alert > 0 else 0
@@ -1255,6 +1264,7 @@ def outcome_tracker():
 
                     price_alert = float(entry["price_at_alert"] or 0)
                     price_now_f = float(price_now or 0)
+
                     price_change_pct = (
                         (price_now_f - price_alert) / price_alert * 100
                         if price_alert > 0 else 0
@@ -1265,112 +1275,148 @@ def outcome_tracker():
                         and price_now_f >= price_alert * 0.5
                     )
 
-                    outcome_label = "survived" if survived else "rugged"
+                    outcome_label = (
+                        "survived"
+                        if survived
+                        else "rugged"
+                    )
 
                     with journal_db() as conn:
                         conn.execute("""
                             INSERT INTO alert_outcomes (
-                                mint, symbol, alerted_at, checked_at,
-                                check_window, liq_at_alert, liq_at_check,
-                                liq_change_pct, price_at_alert, price_at_check,
-                                price_change_pct, survived, outcome_label
-                            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                mint,
+                                symbol,
+                                alerted_at,
+                                checked_at,
+                                check_window,
+                                liq_at_alert,
+                                liq_at_check,
+                                liq_change_pct,
+                                price_at_alert,
+                                price_at_check,
+                                price_change_pct,
+                                survived,
+                                outcome_label
+                            )
+                            VALUES (
+                                %s,%s,%s,%s,%s,
+                                %s,%s,%s,%s,%s,
+                                %s,%s,%s
+                            )
                         """, (
-                            entry["mint"], entry["symbol"], entry["alerted_at"],
-                            now_str, label, liq_alert, real_liq,
-                            round(liq_change_pct, 2), entry["price_at_alert"],
-                            str(price_now_f), round(price_change_pct, 2),
-                            survived, outcome_label
+                            entry["mint"],
+                            entry["symbol"],
+                            entry["alerted_at"],
+                            now_str,
+                            label,
+                            liq_alert,
+                            real_liq,
+                            round(liq_change_pct, 2),
+                            entry["price_at_alert"],
+                            str(price_now_f),
+                            round(price_change_pct, 2),
+                            survived,
+                            outcome_label
                         ))
+
                         conn.commit()
 
                     entry["checks_done"].append(label)
 
                     logging.info(
-                        f"📊 Outcome [{label}] {entry['symbol']} | "
-                        f"liq_chg={liq_change_pct:.1f}% | "
-                        f"price_chg={price_change_pct:.1f}% | "
+                        f"📊 Outcome [{label}] "
+                        f"{entry['symbol']} | "
+                        f"liq={liq_change_pct:.1f}% | "
+                        f"price={price_change_pct:.1f}% | "
                         f"{outcome_label}"
                     )
 
                 except Exception:
-                    logging.exception(f"Outcome check error: {entry['symbol']} [{label}]")
+                    logging.exception(
+                        f"Outcome check error: "
+                        f"{entry['symbol']} [{label}]"
+                    )
+
                     entry["checks_done"].append(label)
 
-                    # PHASE 2/4: HISTORIAN — raw snapshot capture
+            # ==========================================
+            # PHASE 2 STARTS BELOW
+            # ==========================================
+
+                                # PHASE 2/4: HISTORIAN — raw snapshot capture
             for snap_label, snap_seconds in SNAPSHOT_WINDOWS:
-            if snap_label in entry.get("snapshots_done", []):
-                continue
 
-            if elapsed < snap_seconds:
-                continue
-            try:
-                m = fetch_snapshot_metrics(entry["mint"])
-
-                print("SNAPSHOT METRICS:", snap_label, m)
-
-                if not m:
-                    print("SNAPSHOT FETCH FAILED:", entry["symbol"], snap_label)
-                    logging.warning(
-                        f"📸 Snapshot metrics unavailable: "
-                        f"{entry['symbol']} [{snap_label}] - retry pending"
-                    )
+                if snap_label in entry.get("snapshots_done", []):
                     continue
 
-                print(
-                    "Saving snapshot:",
-                    entry["symbol"],
-                    "checkpoint=",
-                    snap_label,
-                    "alert_id=",
-                    entry.get("alert_id"),
-                    "type=",
-                    type(entry.get("alert_id"))
-                )
+                if elapsed < snap_seconds:
+                    continue
 
-                record_snapshot(
-                    entry.get("alert_id"),
-                    entry["mint"],
-                    entry["symbol"],
-                    snap_label,
-                    m["price"],
-                    m["liquidity"],
-                    m.get("volume"),
-                    m.get("fdv"),
-                    now_str,
-                    m["buys"],
-                    m["sells"],
-                    m["sell_ratio"],
-                    m["tx_count"],
-                )
+                try:
+                    m = fetch_snapshot_metrics(entry["mint"])
 
-                # Reuse this same reading to also update peak state.
-                # No extra API call needed.
-                if m["price"]:
-                    current_peak = entry.get("peak_price_seen") or 0
+                    print("SNAPSHOT METRICS:", snap_label, m)
 
-                    if m["price"] > current_peak:
-                        entry["peak_price_seen"] = m["price"]
-                        entry["peak_seen_at"] = now_str
-                        entry["peak_liquidity_seen"] = m["liquidity"]
-                        entry["peak_volume_seen"] = m.get("volume", 0)
-                        entry["peak_buys_seen"] = m["buys"]
-                        entry["peak_sells_seen"] = m["sells"]
-                        entry["peak_sell_ratio_seen"] = m["sell_ratio"]
-                        entry["peak_tx_count_seen"] = m["tx_count"]
+                    if not m:
+                        print("SNAPSHOT FETCH FAILED:", entry["symbol"], snap_label)
+                        logging.warning(
+                            f"📸 Snapshot metrics unavailable: "
+                            f"{entry['symbol']} [{snap_label}] - retry pending"
+                        )
+                        continue
 
-                # Mark done ONLY after successful snapshot save
-                entry.setdefault("snapshots_done", []).append(snap_label)
+                    print(
+                        "Saving snapshot:",
+                        entry["symbol"],
+                        "checkpoint=",
+                        snap_label,
+                        "alert_id=",
+                        entry.get("alert_id"),
+                        "type=",
+                        type(entry.get("alert_id"))
+                    )
 
-                logging.info(
-                    f"📸 Snapshot [{snap_label}] saved: {entry['symbol']}"
-                )
+                    record_snapshot(
+                        entry.get("alert_id"),
+                        entry["mint"],
+                        entry["symbol"],
+                        snap_label,
+                        m["price"],
+                        m["liquidity"],
+                        m.get("volume"),
+                        m.get("fdv"),
+                        now_str,
+                        m["buys"],
+                        m["sells"],
+                        m["sell_ratio"],
+                        m["tx_count"],
+                    )
 
-            except Exception:
-                logging.exception(
-                    f"Snapshot error: {entry['symbol']} [{snap_label}] "
-                    f"— retry pending"
-                )
+                    # Reuse this same reading to also update peak state.
+                    if m["price"]:
+                        current_peak = entry.get("peak_price_seen") or 0
+
+                        if m["price"] > current_peak:
+                            entry["peak_price_seen"] = m["price"]
+                            entry["peak_seen_at"] = now_str
+                            entry["peak_liquidity_seen"] = m["liquidity"]
+                            entry["peak_volume_seen"] = m.get("volume", 0)
+                            entry["peak_buys_seen"] = m["buys"]
+                            entry["peak_sells_seen"] = m["sells"]
+                            entry["peak_sell_ratio_seen"] = m["sell_ratio"]
+                            entry["peak_tx_count_seen"] = m["tx_count"]
+
+                    # Mark done ONLY after successful snapshot save
+                    entry.setdefault("snapshots_done", []).append(snap_label)
+
+                    logging.info(
+                        f"📸 Snapshot [{snap_label}] saved: {entry['symbol']}"
+                    )
+
+                except Exception:
+                    logging.exception(
+                        f"Snapshot error: {entry['symbol']} [{snap_label}] — retry pending"
+                    )
 
             # PHASE 4: peak tracking BETWEEN checkpoints
             still_active = (
@@ -1378,13 +1424,17 @@ def outcome_tracker():
                 or len(entry.get("snapshots_done", [])) < len(SNAPSHOT_WINDOWS)
             )
 
-            if still_active and (now_ts - entry.get("last_peak_poll_ts", 0)) >= PEAK_POLL_INTERVAL_SECONDS:
+            if still_active and (
+                now_ts - entry.get("last_peak_poll_ts", 0)
+            ) >= PEAK_POLL_INTERVAL_SECONDS:
+
                 try:
                     m = fetch_snapshot_metrics(entry["mint"])
                     entry["last_peak_poll_ts"] = now_ts
 
                     if m and m["price"]:
                         current_peak = entry.get("peak_price_seen") or 0
+
                         if m["price"] > current_peak:
                             entry["peak_price_seen"] = m["price"]
                             entry["peak_seen_at"] = now_str
@@ -1396,7 +1446,9 @@ def outcome_tracker():
                             entry["peak_tx_count_seen"] = m["tx_count"]
 
                 except Exception:
-                    logging.exception(f"Peak poll error: {entry['symbol']}")
+                    logging.exception(
+                        f"Peak poll error: {entry['symbol']}"
+                    )
 
             if (
                 len(entry["checks_done"]) >= len(CHECK_WINDOWS)
