@@ -1131,8 +1131,11 @@ def record_snapshot(
                 buys, sells, sell_ratio, tx_count
             ))
             conn.commit()
-    except Exception:
-        logging.exception(f"Snapshot save error: {symbol} [{checkpoint}]")
+    except Exception as e:
+    logging.exception(f"Snapshot save error: {symbol} [{checkpoint}]")
+    print("SNAPSHOT ERROR:", repr(e))
+    print("SNAPSHOT ERROR TYPE:", type(e).__name__)
+    print("SNAPSHOT ERROR ARGS:", e.args)
 
 # ==========================================
 # STATE
@@ -1311,6 +1314,17 @@ def outcome_tracker():
                         f"{entry['symbol']} [{snap_label}] — retry pending"
                     )
                     continue
+print(
+    "Saving snapshot:",
+    entry["symbol"],
+    "checkpoint=",
+    snap_label,
+    "alert_id=",
+    entry.get("alert_id"),
+    "type=",
+    type(entry.get("alert_id"))
+)
+
 
                 record_snapshot(
     entry.get("alert_id"),
