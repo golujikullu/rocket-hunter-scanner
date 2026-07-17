@@ -1170,15 +1170,11 @@ CHECK_WINDOWS = [
 # PHASE 2: Historian snapshot checkpoints (separate from CHECK_WINDOWS above,
 # so existing alert_outcomes / survival_stats logic stays untouched)
 SNAPSHOT_WINDOWS = [
-    ("5m", 5 * 60),
-    ("10m", 10 * 60),
-    ("15m", 15 * 60),
-    ("20m", 20 * 60),
-    ("25m", 25 * 60),
-    ("30m", 30 * 60),
-    ("40m", 40 * 60),
-    ("50m", 50 * 60),
-    ("60m", 60 * 60),
+    ("1m", 60),
+    ("5m", 120),
+    ("10m", 180),
+    ("15m", 240),
+    ("30m", 300),
 ]
 
 # PHASE 4: peak tracking BETWEEN checkpoints, so a spike that comes and goes
