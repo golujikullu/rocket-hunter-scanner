@@ -1707,10 +1707,10 @@ def journal_detail(alert_id):
         if not alert_row:
             return jsonify({"error": "alert_id not found"}), 404
 
-        cur.execute("""
+                cur.execute("""
             SELECT checkpoint, price, liquidity, volume, fdv, snapshot_time
             FROM coin_snapshots
-            WHERE alert_id = ?
+            WHERE alert_id = %s
             ORDER BY
                 CASE checkpoint
                     WHEN '1m' THEN 1
