@@ -1132,10 +1132,10 @@ def record_snapshot(
             ))
             conn.commit()
     except Exception as e:
-    logging.exception(f"Snapshot save error: {symbol} [{checkpoint}]")
-    print("SNAPSHOT ERROR:", repr(e))
-    print("SNAPSHOT ERROR TYPE:", type(e).__name__)
-    print("SNAPSHOT ERROR ARGS:", e.args)
+        logging.exception(f"Snapshot save error: {symbol} [{checkpoint}]")
+        print("SNAPSHOT ERROR:", repr(e))
+        print("SNAPSHOT ERROR TYPE:", type(e).__name__)
+        print("SNAPSHOT ERROR ARGS:", e.args)
 
 # ==========================================
 # STATE
