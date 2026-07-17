@@ -1304,17 +1304,18 @@ def outcome_tracker():
 
             if elapsed < snap_seconds:
                 continue
+
             try:
                 m = fetch_snapshot_metrics(entry["mint"])
 
-               if not m:
+                if not m:
                     logging.warning(
                         f"📸 Snapshot metrics unavailable: "
                         f"{entry['symbol']} [{snap_label}] — retry pending"
                     )
                     continue
 
-               print(
+                print(
                     "Saving snapshot:",
                     entry["symbol"],
                     "checkpoint=",
@@ -1324,7 +1325,6 @@ def outcome_tracker():
                     "type=",
                     type(entry.get("alert_id"))
                 )
-
 
                 record_snapshot(
     entry.get("alert_id"),
