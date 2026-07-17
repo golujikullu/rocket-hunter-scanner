@@ -1701,7 +1701,7 @@ def journal_detail(alert_id):
         
         cur = conn.cursor()
 
-        cur.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,))
+       cur.execute("SELECT * FROM alerts WHERE id = %s", (alert_id,))
         alert_row = cur.fetchone()
 
         if not alert_row:
