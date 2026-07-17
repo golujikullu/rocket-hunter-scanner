@@ -1562,8 +1562,13 @@ def compute_journal_metrics(alert_price, alerted_at, snapshots):
                 real elapsed minutes to peak (not just the nominal checkpoint label).
     Returns None if we don't have a usable baseline alert_price.
     """
-    if not alert_price or alert_price <= 0:
-        return None
+    try:
+    alert_price = float(alert_price)
+except (TypeError, ValueError):
+    alert_price = 0.0
+
+if not alert_price or alert_price <= 0:
+    return {}
 
     checkpoint_rows = {
         s["checkpoint"]: s
