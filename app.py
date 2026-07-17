@@ -1698,10 +1698,10 @@ def penalty_stats():
 def journal_detail(alert_id):
     """Ek coin ki poori life-story — raw snapshots + calculated metrics."""
     with journal_db() as conn:
-        
+
         cur = conn.cursor()
 
-       cur.execute("SELECT * FROM alerts WHERE id = %s", (alert_id,))
+        cur.execute("SELECT * FROM alerts WHERE id = %s", (alert_id,))
         alert_row = cur.fetchone()
 
         if not alert_row:
