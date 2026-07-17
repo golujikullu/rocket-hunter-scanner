@@ -1306,14 +1306,19 @@ def outcome_tracker():
                 continue
 
             try:
-                m = fetch_snapshot_metrics(entry["mint"])
+                
 
-                if not m:
-                    logging.warning(
-                        f"📸 Snapshot metrics unavailable: "
-                        f"{entry['symbol']} [{snap_label}] — retry pending"
-                    )
-                    continue
+               m = fetch_snapshot_metrics(entry["mint"])
+
+                   print("SNAPSHOT METRICS:", snap_label, m)
+
+if not m:
+    print("SNAPSHOT FETCH FAILED:", entry["symbol"], snap_label)
+    logging.warning(
+        f"📸 Snapshot metrics unavailable: "
+        f"{entry['symbol']} [{snap_label}] — retry pending"
+    )
+    continue 
 
                 print(
                     "Saving snapshot:",
