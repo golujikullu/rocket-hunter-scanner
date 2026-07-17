@@ -1714,19 +1714,29 @@ def journal_detail(alert_id):
             return jsonify({"error": "alert_id not found"}), 404
 
         cur.execute("""
-            SELECT checkpoint, price, liquidity, volume, fdv, snapshot_time
-            FROM coin_snapshots
-            WHERE alert_id = %s
-            ORDER BY
-                CASE checkpoint
-                    WHEN '1m' THEN 1
-                    WHEN '5m' THEN 2
-                    WHEN '15m' THEN 3
-                    WHEN '30m' THEN 4
-                    WHEN '60m' THEN 5
-                    ELSE 6
-                END
-        """, (alert_id,))
+    SELECT
+        checkpoint,
+        price,
+        liquidity,
+        volume,
+        fdv,
+        buys,
+        sells,
+        sell_ratio,
+        tx_count,
+        snapshot_time
+    FROM coin_snapshots
+    WHERE alert_id = %s
+    ORDER BY
+        CASE checkpoint
+            WHEN '1m' THEN 1
+            WHEN '5m' THEN 2
+            WHEN '15m' THEN 3
+            WHEN '30m' THEN 4
+            WHEN '60m' THEN 5
+            ELSE 6
+        END
+""", (alert_id,))
         snapshots = [dict(r) for r in cur.fetchall()]
 
         alert_dict = dict(alert_row)
