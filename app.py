@@ -1304,21 +1304,18 @@ def outcome_tracker():
 
             if elapsed < snap_seconds:
                 continue
-
             try:
-                
+                m = fetch_snapshot_metrics(entry["mint"])
 
-               m = fetch_snapshot_metrics(entry["mint"])
+                print("SNAPSHOT METRICS:", snap_label, m)
 
-                   print("SNAPSHOT METRICS:", snap_label, m)
-
-if not m:
-    print("SNAPSHOT FETCH FAILED:", entry["symbol"], snap_label)
-    logging.warning(
-        f"📸 Snapshot metrics unavailable: "
-        f"{entry['symbol']} [{snap_label}] — retry pending"
-    )
-    continue 
+                if not m:
+                    print("SNAPSHOT FETCH FAILED:", entry["symbol"], snap_label)
+                    logging.warning(
+                        f"📸 Snapshot metrics unavailable: "
+                        f"{entry['symbol']} [{snap_label}] - retry pending"
+                    )
+                    continue
 
                 print(
                     "Saving snapshot:",
@@ -1332,20 +1329,20 @@ if not m:
                 )
 
                 record_snapshot(
-    entry.get("alert_id"),
-    entry["mint"],
-    entry["symbol"],
-    snap_label,
-    m["price"],
-    m["liquidity"],
-    m.get("volume"),
-    m.get("fdv"),
-    now_str,
-    m["buys"],
-    m["sells"],
-    m["sell_ratio"],
-    m["tx_count"],
-)
+                    entry.get("alert_id"),
+                    entry["mint"],
+                    entry["symbol"],
+                    snap_label,
+                    m["price"],
+                    m["liquidity"],
+                    m.get("volume"),
+                    m.get("fdv"),
+                    now_str,
+                    m["buys"],
+                    m["sells"],
+                    m["sell_ratio"],
+                    m["tx_count"],
+                )
 
                 # Reuse this same reading to also update peak state.
                 # No extra API call needed.
