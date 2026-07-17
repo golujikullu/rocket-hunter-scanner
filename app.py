@@ -1342,11 +1342,19 @@ def outcome_tracker():
                                 # PHASE 2/4: HISTORIAN — raw snapshot capture
             for snap_label, snap_seconds in SNAPSHOT_WINDOWS:
 
-                if snap_label in entry.get("snapshots_done", []):
-                    continue
+    logging.info(
+        f"DEBUG SNAPSHOT {entry['symbol']} "
+        f"label={snap_label} "
+        f"elapsed={elapsed} "
+        f"need={snap_seconds} "
+        f"done={entry.get('snapshots_done', [])}"
+    )
 
-                if elapsed < snap_seconds:
-                    continue
+    if snap_label in entry.get("snapshots_done", []):
+        continue
+
+    if elapsed < snap_seconds:
+        continue
 
                 try:
                     m = fetch_snapshot_metrics(entry["mint"])
