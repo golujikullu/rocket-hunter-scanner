@@ -1493,6 +1493,19 @@ def debug_authorized():
     return request.args.get("key") == os.getenv("DEBUG_KEY")
 
 
+@app.route("/debug_auth_check")
+def debug_auth_check():
+    """TEMPORARY diagnostic route — remove after DEBUG_KEY mismatch is resolved.
+    Does not expose actual secret values, only presence/equality booleans."""
+    env_key = os.getenv("DEBUG_KEY")
+    req_key = request.args.get("key")
+    return jsonify({
+        "env_present": env_key is not None,
+        "request_present": req_key is not None,
+        "equal": req_key == env_key,
+    })
+
+
 @app.route("/snapshot_counts")
 def snapshot_counts():
     if not debug_authorized():
