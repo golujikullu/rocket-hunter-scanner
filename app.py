@@ -1334,42 +1334,40 @@ def outcome_tracker():
                     )
 
                     entry["checks_done"].append(label)
-
             # ==========================================
             # PHASE 2 STARTS BELOW
             # ==========================================
 
-                                # PHASE 2/4: HISTORIAN — raw snapshot capture
-    for snap_label, snap_seconds in SNAPSHOT_WINDOWS:
+               for snap_label, snap_seconds in SNAPSHOT_WINDOWS:
 
-       logging.info(
-        f"DEBUG SNAPSHOT {entry['symbol']} "
-        f"label={snap_label} "
-        f"elapsed={elapsed} "
-        f"need={snap_seconds} "
-        f"done={entry.get('snapshots_done', [])}"
-    )
+                logging.info(
+                    f"DEBUG SNAPSHOT {entry['symbol']} "
+                    f"label={snap_label} "
+                    f"elapsed={elapsed} "
+                    f"need={snap_seconds} "
+                    f"done={entry.get('snapshots_done', [])}"
+                )
 
-      if snap_label in entry.get("snapshots_done", []):
-        continue
+                   if snap_label in entry.get("snapshots_done", []):
+                    continue
 
-      if elapsed < snap_seconds:
-        continue
+                   if elapsed < snap_seconds:
+                    continue
 
-      try:
-                m = fetch_snapshot_metrics(entry["mint"])
+                   try:
+                    m = fetch_snapshot_metrics(entry["mint"])
 
                     print("SNAPSHOT METRICS:", snap_label, m)
 
-                    if not m:
+                   if not m:
                         print("SNAPSHOT FETCH FAILED:", entry["symbol"], snap_label)
                         logging.warning(
                             f"📸 Snapshot metrics unavailable: "
                             f"{entry['symbol']} [{snap_label}] - retry pending"
                         )
-                        continue
+                     continue
 
-                    print(
+                      print(
                         "Saving snapshot:",
                         entry["symbol"],
                         "checkpoint=",
@@ -1377,10 +1375,10 @@ def outcome_tracker():
                         "alert_id=",
                         entry.get("alert_id"),
                         "type=",
-                        type(entry.get("alert_id"))
+                      type(entry.get("alert_id"))
                     )
 
-                    record_snapshot(
+                      record_snapshot(
                         entry.get("alert_id"),
                         entry["mint"],
                         entry["symbol"],
@@ -1400,7 +1398,7 @@ def outcome_tracker():
                     if m["price"]:
                         current_peak = entry.get("peak_price_seen") or 0
 
-                        if m["price"] > current_peak:
+                    if m["price"] > current_peak:
                             entry["peak_price_seen"] = m["price"]
                             entry["peak_seen_at"] = now_str
                             entry["peak_liquidity_seen"] = m["liquidity"]
