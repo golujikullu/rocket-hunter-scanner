@@ -11,7 +11,7 @@ import statistics
 import logging
 import threading
 import requests
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from threading import Thread
 from datetime import datetime, timezone
 from contextlib import contextmanager
@@ -1481,6 +1481,58 @@ def outcome_tracker():
                         OUTCOME_QUEUE.remove(e)
                     except ValueError:
                         pass
+
+# ==========================================
+# DEBUG ENDPOINTS (temporary — verify Historian, then remove or gate)
+# ==========================================
+
+
+def debug_authorized():
+    return request.args.get("key") == os.getenv("DEBUG_KEY")
+
+
+@app.route("/snapshot_counts")
+def snapshot_counts():
+    if not debug_authorized():
+        return jsonify({"error": "unauthorized"}), 403
+
+    with journal_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT checkpoint, COUNT(*) AS total
+            FROM coin_snapshots
+            GROUP BY checkpoint
+            ORDER BY checkpoint
+        """)
+        rows = cur.fetchall()
+
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/debug_snapshots")
+def debug_snapshots():
+    if not debug_authorized():
+        return jsonify({"error": "unauthorized"}), 403
+
+    with journal_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT symbol, checkpoint, price, liquidity, volume, fdv,
+                   buys, sells, sell_ratio, tx_count, snapshot_time
+            FROM coin_snapshots
+            ORDER BY id DESC
+            LIMIT 20
+        """)
+        rows = cur.fetchall()
+
+    result = []
+    for r in rows:
+        d = dict(r)
+        if d.get("snapshot_time") is not None:
+            d["snapshot_time"] = str(d["snapshot_time"])
+        result.append(d)
+
+    return jsonify(result)
 
 # ==========================================
 # /outcomes ENDPOINT
