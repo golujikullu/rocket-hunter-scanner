@@ -1488,6 +1488,8 @@ def outcome_tracker():
 
 
 def debug_authorized():
+    logging.info("env key present=%s", os.getenv("DEBUG_KEY") is not None)
+    logging.info("request has key=%s", request.args.get("key") is not None)
     return request.args.get("key") == os.getenv("DEBUG_KEY")
 
 
