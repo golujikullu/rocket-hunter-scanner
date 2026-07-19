@@ -544,6 +544,15 @@ def init_journal_db():
         )
     """)
 
+    # STARTUP MIGRATION: for databases that already existed before
+    # pair_address was added to the CREATE TABLE definition above.
+    # CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so this
+    # explicit ALTER TABLE runs every startup to guarantee the column is
+    # always present. Safe to run repeatedly (IF NOT EXISTS = idempotent).
+    cur.execute(
+        "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS pair_address TEXT"
+    )
+
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_alerts_mint ON alerts(mint)"
     )
