@@ -539,7 +539,8 @@ def init_journal_db():
             reasons_json TEXT,
             penalties_json TEXT,
             tx_source TEXT,
-            price_at_alert TEXT
+            price_at_alert TEXT,
+            pair_address TEXT
         )
     """)
 
@@ -1026,7 +1027,8 @@ def log_alert(
     reasons_json=None,
     penalties_json=None,
     tx_source=None,
-    price_at_alert=None
+    price_at_alert=None,
+    pair_address=None
 ):
     with journal_db() as conn:
         cur = conn.execute("""
@@ -1034,15 +1036,17 @@ def log_alert(
                 mint, symbol, timestamp, liquidity, volume, price_change,
                 age_hours, entry_label, buys, sells, buyers, suspicious,
                 fdv, shield_result, alert_sent, label, conviction_score,
-                reasons_json, penalties_json, tx_source, price_at_alert
+                reasons_json, penalties_json, tx_source, price_at_alert,
+                pair_address
             )
-                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (           
             mint, symbol, ts, liquidity, volume, price_change,
             age_hours, entry_label, buys, sells, buyers, suspicious,
             fdv, shield_result, 1 if alert_sent else 0, label or "pending",
-            conviction_score, reasons_json, penalties_json, tx_source, price_at_alert
+            conviction_score, reasons_json, penalties_json, tx_source, price_at_alert,
+            pair_address
         ))
         new_alert_id = cur.fetchone()["id"]
         conn.commit()
@@ -1171,10 +1175,11 @@ CHECK_WINDOWS = [
 # so existing alert_outcomes / survival_stats logic stays untouched)
 SNAPSHOT_WINDOWS = [
     ("1m", 60),
-    ("5m", 120),
-    ("10m", 180),
-    ("15m", 240),
-    ("30m", 300),
+    ("5m", 300),
+    ("10m", 600),
+    ("15m", 900),
+    ("30m", 1800),
+    ("60m", 3600),
 ]
 
 # PHASE 4: peak tracking BETWEEN checkpoints, so a spike that comes and goes
@@ -1688,8 +1693,8 @@ def score_report():
 # PHASE 3: HISTORIAN — calculated metrics (on-the-fly, no new table yet)
 # ==========================================
 
-CHECKPOINT_ORDER = ["1m", "5m", "15m", "30m", "60m"]
-CHECKPOINT_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60}
+CHECKPOINT_ORDER = ["1m", "5m", "10m", "15m", "30m", "60m"]
+CHECKPOINT_MINUTES = {"1m": 1, "5m": 5, "10m": 10, "15m": 15, "30m": 30, "60m": 60}
 
 
 def compute_journal_metrics(alert_price, alerted_at, snapshots):
@@ -1767,7 +1772,7 @@ def compute_journal_metrics(alert_price, alerted_at, snapshots):
 
     final_price = checkpoint_rows[final_checkpoint]["price"] if final_checkpoint else None
 
-    if final_checkpoint == "60m" and final_price is not None:
+    if final_checkpoint == CHECKPOINT_ORDER[-1] and final_price is not None:
         outcome = "Winner" if final_price >= alert_price * 0.5 else "Rug"
     else:
         outcome = "Active"
@@ -1868,10 +1873,11 @@ def journal_detail(alert_id):
         CASE checkpoint
             WHEN '1m' THEN 1
             WHEN '5m' THEN 2
-            WHEN '15m' THEN 3
-            WHEN '30m' THEN 4
-            WHEN '60m' THEN 5
-            ELSE 6
+            WHEN '10m' THEN 3
+            WHEN '15m' THEN 4
+            WHEN '30m' THEN 5
+            WHEN '60m' THEN 6
+            ELSE 7
         END
 """, (alert_id,))
         snapshots = [dict(r) for r in cur.fetchall()]
@@ -1925,6 +1931,7 @@ def _score_bucket(score):
 
 @app.route("/peak_report")
 def peak_report():
+    final_checkpoint_label = CHECKPOINT_ORDER[-1]
     with journal_db() as conn:
         
         cur = conn.cursor()
@@ -1939,9 +1946,9 @@ def peak_report():
               AND EXISTS (
                     SELECT 1 FROM coin_snapshots s
                     WHERE s.alert_id = a.id
-                      AND s.checkpoint = '60m'
+                      AND s.checkpoint = %s
               )
-        """)
+        """, (final_checkpoint_label,))
 
         alert_rows = [dict(r) for r in cur.fetchall()]
         results = []
@@ -1950,7 +1957,7 @@ def peak_report():
             cur.execute("""
                 SELECT checkpoint, price, liquidity, volume, fdv, snapshot_time
                 FROM coin_snapshots
-                WHERE alert_id = ?
+                WHERE alert_id = %s
             """, (a["alert_id"],))
 
             snapshots = [dict(r) for r in cur.fetchall()]
@@ -2191,6 +2198,7 @@ def failed_peak_crosscheck():
     Cross-check 60m failed/rugged outcomes against peak history.
     Read-only analytics only.
     """
+    final_checkpoint_label = CHECKPOINT_ORDER[-1]
 
     with journal_db() as conn:
         cur = conn.cursor()
@@ -2215,9 +2223,9 @@ def failed_peak_crosscheck():
                     SELECT 1
                     FROM coin_snapshots s
                     WHERE s.alert_id = a.id
-                      AND s.checkpoint = '60m'
+                      AND s.checkpoint = %s
               )
-        """)
+        """, (final_checkpoint_label,))
 
         failed_rows = [dict(r) for r in cur.fetchall()]
         results = []
@@ -2490,7 +2498,8 @@ def scanner():
                             gecko_liq, volume, price_change, age_hours, entry_label,
                             buys, sells, buyers, suspicious, fdv,
                             "LOW_DEX_LIQUIDITY", False, "rejected", 0,
-                            json.dumps([]), json.dumps(["low_dex_liquidity"]), tx_label
+                            json.dumps([]), json.dumps(["low_dex_liquidity"]), tx_label,
+                            pair_address=pair_address
                         )
                         continue
 
@@ -2520,7 +2529,8 @@ def scanner():
                             gecko_liq, volume, price_change, age_hours, entry_label,
                             buys, sells, buyers, suspicious, fdv,
                             shield_reason, False, "blocked", conviction_score,
-                            json.dumps(reasons), json.dumps(penalties), tx_label
+                            json.dumps(reasons), json.dumps(penalties), tx_label,
+                            pair_address=pair_address
                         )
                         logging.info(f"🚫 SHIELD BLOCKED: {symbol} | {shield_reason} | score={conviction_score}")
                         continue
@@ -2544,7 +2554,8 @@ def scanner():
                             buys, sells, buyers, suspicious, fdv,
                             shield_reason, True, "sent", conviction_score,
                             json.dumps(reasons), json.dumps(penalties), tx_label,
-                            price_at_alert_val
+                            price_at_alert_val,
+                            pair_address=pair_address
                         )
 
                         enqueue_outcome_tracking(
