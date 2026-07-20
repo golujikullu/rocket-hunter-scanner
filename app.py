@@ -1520,6 +1520,34 @@ def debug_auth_check():
     })
 
 
+@app.route("/debug_pair_address")
+def debug_pair_address():
+    """TEMPORARY diagnostic route — verify pair_address is actually being
+    written into the alerts table. Remove once confirmed."""
+    if not debug_authorized():
+        return jsonify({"error": "unauthorized"}), 403
+
+    with journal_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, mint, symbol, pair_address, timestamp
+            FROM alerts
+            ORDER BY id DESC
+            LIMIT 20
+        """)
+        rows = cur.fetchall()
+
+    result = [dict(r) for r in rows]
+
+    total = len(result)
+    with_pair_address = sum(1 for r in result if r.get("pair_address"))
+
+    return jsonify({
+        "summary": f"{with_pair_address} of {total} recent rows have pair_address",
+        "rows": result,
+    })
+
+
 @app.route("/snapshot_counts")
 def snapshot_counts():
     if not debug_authorized():
