@@ -1624,6 +1624,39 @@ def dataset_validation():
         """)
         outcome_completeness = [dict(r) for r in cur.fetchall()]
 
+        # 5. Incomplete snapshot root cause: for alerts with < 6 checkpoints,
+        # check their 60m outcome (joined via mint+symbol, the established
+        # pattern elsewhere in this codebase) to see if incompleteness
+        # correlates with coin death (rugged) vs something else (survived,
+        # or no outcome recorded at all).
+        cur.execute("""
+            WITH incomplete AS (
+                SELECT alert_id
+                FROM coin_snapshots
+                WHERE checkpoint IN ('1m','5m','10m','15m','30m','60m')
+                GROUP BY alert_id
+                HAVING COUNT(DISTINCT checkpoint) < 6
+            )
+            SELECT
+                COUNT(*) FILTER (WHERE o.outcome_label = 'rugged') as rugged,
+                COUNT(*) FILTER (WHERE o.outcome_label = 'survived') as survived,
+                COUNT(*) FILTER (WHERE o.outcome_label IS NULL) as no_60m_outcome,
+                COUNT(*) as total_incomplete
+            FROM incomplete i
+            JOIN alerts a ON a.id = i.alert_id
+            LEFT JOIN alert_outcomes o
+                ON o.mint = a.mint
+               AND o.symbol = a.symbol
+               AND o.check_window = '60m'
+        """)
+        root_cause = dict(cur.fetchone())
+
+        total_rc = root_cause.get("total_incomplete") or 0
+        for key in ("rugged", "survived", "no_60m_outcome"):
+            root_cause[f"{key}_pct"] = (
+                round(100.0 * root_cause[key] / total_rc, 2) if total_rc else None
+            )
+
     return jsonify({
         "1_duplicates": {
             "count": len(duplicates),
@@ -1636,6 +1669,7 @@ def dataset_validation():
         },
         "3_snapshot_completeness": snapshot_completeness,
         "4_outcome_completeness": outcome_completeness,
+        "5_incomplete_snapshot_root_cause": root_cause,
     })
 
 
