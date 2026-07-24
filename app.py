@@ -1548,6 +1548,97 @@ def debug_pair_address():
     })
 
 
+@app.route("/dataset_validation")
+def dataset_validation():
+    """TEMPORARY diagnostic route — Phase 3A Gold Dataset Validation.
+    Runs all four checks (duplicates, missing checkpoints, snapshot
+    completeness, outcome completeness) in a single read-only pass.
+    Remove once validation is complete and Phase 3B begins."""
+    if not debug_authorized():
+        return jsonify({"error": "unauthorized"}), 403
+
+    with journal_db() as conn:
+        cur = conn.cursor()
+
+        # 1. Duplicate check
+        cur.execute("""
+            SELECT alert_id, checkpoint, COUNT(*) as cnt
+            FROM coin_snapshots
+            GROUP BY alert_id, checkpoint
+            HAVING COUNT(*) > 1
+        """)
+        duplicates = [dict(r) for r in cur.fetchall()]
+
+        # 2. Missing checkpoints (limit to 50 for readability)
+        cur.execute("""
+            SELECT alert_id, COUNT(DISTINCT checkpoint) as checkpoints_found
+            FROM coin_snapshots
+            WHERE checkpoint IN ('1m','5m','10m','15m','30m','60m')
+            GROUP BY alert_id
+            HAVING COUNT(DISTINCT checkpoint) < 6
+            ORDER BY checkpoints_found
+            LIMIT 50
+        """)
+        missing_checkpoints = [dict(r) for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT COUNT(*) as total_incomplete_alerts FROM (
+                SELECT alert_id
+                FROM coin_snapshots
+                WHERE checkpoint IN ('1m','5m','10m','15m','30m','60m')
+                GROUP BY alert_id
+                HAVING COUNT(DISTINCT checkpoint) < 6
+            ) sub
+        """)
+        total_incomplete = dict(cur.fetchone())
+
+        # 3. Snapshot completeness
+        cur.execute("""
+            SELECT
+              COUNT(DISTINCT alert_id) FILTER (WHERE cnt = 6) as complete,
+              COUNT(DISTINCT alert_id) as total,
+              ROUND(
+                100.0 * COUNT(DISTINCT alert_id) FILTER (WHERE cnt = 6)
+                / NULLIF(COUNT(DISTINCT alert_id), 0), 2
+              ) as pct_complete
+            FROM (
+              SELECT alert_id, COUNT(DISTINCT checkpoint) as cnt
+              FROM coin_snapshots
+              WHERE checkpoint IN ('1m','5m','10m','15m','30m','60m')
+              GROUP BY alert_id
+            ) sub
+        """)
+        snapshot_completeness = dict(cur.fetchone())
+
+        # 4. Outcome completeness (with pct_complete per window)
+        cur.execute("""
+            SELECT check_window,
+                   COUNT(*) as total,
+                   COUNT(*) FILTER (WHERE outcome_label IS NULL) as missing_outcome,
+                   ROUND(
+                     100.0 * (COUNT(*) - COUNT(*) FILTER (WHERE outcome_label IS NULL))
+                     / NULLIF(COUNT(*), 0), 2
+                   ) as pct_complete
+            FROM alert_outcomes
+            GROUP BY check_window
+        """)
+        outcome_completeness = [dict(r) for r in cur.fetchall()]
+
+    return jsonify({
+        "1_duplicates": {
+            "count": len(duplicates),
+            "rows": duplicates[:20],
+            "pass": len(duplicates) == 0,
+        },
+        "2_missing_checkpoints": {
+            "total_incomplete_alerts": total_incomplete["total_incomplete_alerts"],
+            "sample_rows": missing_checkpoints,
+        },
+        "3_snapshot_completeness": snapshot_completeness,
+        "4_outcome_completeness": outcome_completeness,
+    })
+
+
 @app.route("/snapshot_counts")
 def snapshot_counts():
     if not debug_authorized():
