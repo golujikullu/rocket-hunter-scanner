@@ -1657,6 +1657,47 @@ def dataset_validation():
                 round(100.0 * root_cause[key] / total_rc, 2) if total_rc else None
             )
 
+        # 6. Targeted diagnostic: for the "survived but incomplete" subset
+        # specifically (not the whole dataset), which exact checkpoint(s)
+        # are missing most often? This narrows down whether one particular
+        # pipeline stage (e.g. the 10m fetch) is the weak point, rather than
+        # treating the whole Historian as suspect.
+        cur.execute("""
+            WITH incomplete AS (
+                SELECT alert_id
+                FROM coin_snapshots
+                WHERE checkpoint IN ('1m','5m','10m','15m','30m','60m')
+                GROUP BY alert_id
+                HAVING COUNT(DISTINCT checkpoint) < 6
+            ),
+            survived_incomplete AS (
+                SELECT i.alert_id
+                FROM incomplete i
+                JOIN alerts a ON a.id = i.alert_id
+                JOIN alert_outcomes o
+                    ON o.mint = a.mint
+                   AND o.symbol = a.symbol
+                   AND o.check_window = '60m'
+                   AND o.outcome_label = 'survived'
+            ),
+            all_checkpoints AS (
+                SELECT unnest(ARRAY['1m','5m','10m','15m','30m','60m']) AS checkpoint
+            )
+            SELECT
+                ac.checkpoint,
+                COUNT(si.alert_id) as total_survived_incomplete,
+                COUNT(cs.alert_id) as checkpoint_present,
+                COUNT(si.alert_id) - COUNT(cs.alert_id) as checkpoint_missing
+            FROM all_checkpoints ac
+            CROSS JOIN survived_incomplete si
+            LEFT JOIN coin_snapshots cs
+                ON cs.alert_id = si.alert_id
+               AND cs.checkpoint = ac.checkpoint
+            GROUP BY ac.checkpoint
+            ORDER BY checkpoint_missing DESC
+        """)
+        survived_incomplete_breakdown = [dict(r) for r in cur.fetchall()]
+
     return jsonify({
         "1_duplicates": {
             "count": len(duplicates),
@@ -1670,6 +1711,7 @@ def dataset_validation():
         "3_snapshot_completeness": snapshot_completeness,
         "4_outcome_completeness": outcome_completeness,
         "5_incomplete_snapshot_root_cause": root_cause,
+        "6_survived_incomplete_checkpoint_breakdown": survived_incomplete_breakdown,
     })
 
 
