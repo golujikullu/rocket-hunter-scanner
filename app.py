@@ -1196,6 +1196,20 @@ SNAPSHOT_WINDOWS = [
 # to avoid hammering DexScreener with too many extra calls.
 PEAK_POLL_INTERVAL_SECONDS = int(os.getenv("PEAK_POLL_INTERVAL_SECONDS", "120"))
 
+# PHASE 5: self-cleaning queue safeguards.
+# - MAX_SNAPSHOT_RETRIES: after this many failed attempts on a single
+#   checkpoint, give up on that checkpoint (mark it done so it stops
+#   blocking removal) instead of retrying forever.
+# - QUEUE_MAX_AGE_SECONDS: hard ceiling on how long any entry can live in
+#   OUTCOME_QUEUE. Past this, the entry is force-expired regardless of
+#   what's still missing, so a permanently-stuck mint can never grow the
+#   backlog without bound.
+MAX_SNAPSHOT_RETRIES = int(os.getenv("MAX_SNAPSHOT_RETRIES", "5"))
+QUEUE_MAX_AGE_SECONDS = int(os.getenv("QUEUE_MAX_AGE_SECONDS", str(90 * 60)))  # 90 minutes
+# Avoid re-fetching DexScreener for peak-tracking if a snapshot fetch already
+# happened very recently in this same pass (PHASE 5 / Issue 7 — peak reuse).
+PEAK_REUSE_WINDOW_SECONDS = 15
+
 
 def enqueue_outcome_tracking(mint, symbol, liq_at_alert, price_at_alert, alert_id=None):
     """Call this right after a successful alert send."""
@@ -1214,6 +1228,8 @@ def enqueue_outcome_tracking(mint, symbol, liq_at_alert, price_at_alert, alert_i
         "alert_id": alert_id,
         "checks_done": [],
         "snapshots_done": [],
+        "snapshot_retries": {},
+        "last_snapshot_fetch_ts": 0,
         "peak_price_seen": baseline_price if baseline_price > 0 else None,
         "peak_seen_at": None,
         "peak_liquidity_seen": None,
@@ -1242,11 +1258,45 @@ def outcome_tracker():
         with OUTCOME_LOCK:
             queue_copy = list(OUTCOME_QUEUE)
 
+        # PHASE 5 / Priority 3 — queue metrics, so backlog is visible instead
+        # of only showing up indirectly as missing 10m/60m snapshots later.
+        if queue_copy:
+            oldest_age = max(now_ts - e["alerted_ts"] for e in queue_copy)
+            logging.info(
+                f"📊 Outcome queue: size={len(queue_copy)} "
+                f"oldest_age={oldest_age:.0f}s"
+            )
+        loop_start_ts = now_ts
+
         to_remove = []
 
         for entry in queue_copy:
 
             elapsed = now_ts - entry["alerted_ts"]
+
+            # PHASE 5 / Priority 2 — hard timeout. No matter what's still
+            # missing, an entry can never live in the queue past this age.
+            # This is the actual fix for the infinite-queue bug: previously
+            # an entry only left OUTCOME_QUEUE once every check AND every
+            # snapshot succeeded, so one permanently-failing checkpoint (a
+            # delisted mint, a dead DexScreener pair, etc.) kept it forever.
+            if elapsed > QUEUE_MAX_AGE_SECONDS:
+                missing_checks = [l for l, _ in CHECK_WINDOWS if l not in entry["checks_done"]]
+                missing_snaps = [l for l, _ in SNAPSHOT_WINDOWS if l not in entry.get("snapshots_done", [])]
+                if missing_checks or missing_snaps:
+                    logging.warning(
+                        f"⏱️ Force-expiring stuck outcome entry: "
+                        f"alert_id={entry.get('alert_id')} "
+                        f"symbol={entry['symbol']} mint={entry['mint']} "
+                        f"elapsed={elapsed:.0f}s "
+                        f"missing_checks={missing_checks} "
+                        f"missing_snapshots={missing_snaps} "
+                        f"retries={entry.get('snapshot_retries', {})}"
+                    )
+                entry["checks_done"] = [l for l, _ in CHECK_WINDOWS]
+                entry["snapshots_done"] = [l for l, _ in SNAPSHOT_WINDOWS]
+                to_remove.append(entry)
+                continue
 
             # ==========================================
             # PHASE 1 — OUTCOME CHECKS
@@ -1375,10 +1425,22 @@ def outcome_tracker():
 
                     if not m:
                         print("SNAPSHOT FETCH FAILED:", entry["symbol"], snap_label)
-                        logging.warning(
-                            f"📸 Snapshot metrics unavailable: "
-                            f"{entry['symbol']} [{snap_label}] - retry pending"
-                        )
+                        retries = entry.setdefault("snapshot_retries", {})
+                        retries[snap_label] = retries.get(snap_label, 0) + 1
+
+                        if retries[snap_label] >= MAX_SNAPSHOT_RETRIES:
+                            logging.warning(
+                                f"📸 Snapshot permanently unavailable, giving up: "
+                                f"{entry['symbol']} [{snap_label}] "
+                                f"after {retries[snap_label]} attempts"
+                            )
+                            entry.setdefault("snapshots_done", []).append(snap_label)
+                        else:
+                            logging.warning(
+                                f"📸 Snapshot metrics unavailable: "
+                                f"{entry['symbol']} [{snap_label}] - retry "
+                                f"{retries[snap_label]}/{MAX_SNAPSHOT_RETRIES}"
+                            )
                         continue
 
                     print(
@@ -1424,15 +1486,33 @@ def outcome_tracker():
 
                     # Mark done ONLY after successful snapshot save
                     entry.setdefault("snapshots_done", []).append(snap_label)
+                    entry["last_snapshot_fetch_ts"] = now_ts
+                    # Success — clear any accumulated retry count for this
+                    # checkpoint (a transient blip shouldn't count against
+                    # future unrelated failures, and it keeps the log
+                    # noise-free if this label is ever retried again).
+                    entry.get("snapshot_retries", {}).pop(snap_label, None)
 
                     logging.info(
                         f"📸 Snapshot [{snap_label}] saved: {entry['symbol']}"
                     )
 
                 except Exception:
-                    logging.exception(
-                        f"Snapshot error: {entry['symbol']} [{snap_label}] — retry pending"
-                    )
+                    retries = entry.setdefault("snapshot_retries", {})
+                    retries[snap_label] = retries.get(snap_label, 0) + 1
+
+                    if retries[snap_label] >= MAX_SNAPSHOT_RETRIES:
+                        logging.exception(
+                            f"Snapshot error, giving up after "
+                            f"{retries[snap_label]} attempts: "
+                            f"{entry['symbol']} [{snap_label}]"
+                        )
+                        entry.setdefault("snapshots_done", []).append(snap_label)
+                    else:
+                        logging.exception(
+                            f"Snapshot error: {entry['symbol']} [{snap_label}] — "
+                            f"retry {retries[snap_label]}/{MAX_SNAPSHOT_RETRIES}"
+                        )
 
             # PHASE 4: peak tracking BETWEEN checkpoints
             still_active = (
@@ -1440,7 +1520,16 @@ def outcome_tracker():
                 or len(entry.get("snapshots_done", [])) < len(SNAPSHOT_WINDOWS)
             )
 
-            if still_active and (
+            recently_fetched_by_snapshot = (
+                now_ts - entry.get("last_snapshot_fetch_ts", 0)
+            ) < PEAK_REUSE_WINDOW_SECONDS
+
+            if still_active and recently_fetched_by_snapshot:
+                # A snapshot fetch in this same pass already updated
+                # peak_* fields above — skip the duplicate DexScreener call.
+                entry["last_peak_poll_ts"] = now_ts
+
+            elif still_active and (
                 now_ts - entry.get("last_peak_poll_ts", 0)
             ) >= PEAK_POLL_INTERVAL_SECONDS:
 
@@ -1495,6 +1584,18 @@ def outcome_tracker():
                         OUTCOME_QUEUE.remove(e)
                     except ValueError:
                         pass
+
+        if queue_copy:
+            iter_duration = time.time() - loop_start_ts
+            logging.info(
+                f"📊 Outcome loop pass done: processed={len(queue_copy)} "
+                f"removed={len(to_remove)} took={iter_duration:.1f}s"
+            )
+            if iter_duration > 25:
+                logging.warning(
+                    f"⚠️ Outcome loop pass took {iter_duration:.1f}s — "
+                    f"approaching/exceeding the 30s cycle, backlog likely growing"
+                )
 
 # ==========================================
 # DEBUG ENDPOINTS (temporary — verify Historian, then remove or gate)
