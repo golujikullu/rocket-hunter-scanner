@@ -474,6 +474,35 @@ def recent():
         rows = [dict(r) for r in cur.fetchall()]
 
         return jsonify(rows), 200
+@app.route("/debug/search")
+def debug_search():
+    if not debug_authorized():
+        return jsonify({"error": "unauthorized"}), 403
+
+    symbol = request.args.get("symbol", "").strip()
+    if not symbol:
+        return jsonify({"error": "missing symbol parameter"}), 400
+
+    try:
+        with journal_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT
+                    id, mint, symbol, timestamp, liquidity, volume,
+                    price_change, age_hours, entry_label, buys, sells,
+                    buyers, fdv, shield_result, alert_sent, label,
+                    conviction_score, reasons_json, penalties_json,
+                    tx_source, price_at_alert, pair_address
+                FROM alerts
+                WHERE UPPER(symbol) = UPPER(%s)
+                ORDER BY id DESC
+            """, (symbol,))
+            rows = [dict(r) for r in cur.fetchall()]
+
+        return jsonify({"symbol": symbol, "count": len(rows), "rows": rows}), 200
+
+    except Exception:
+        return jsonify({"error": "internal error"}), 500
 
 # ==========================================
 # HELPERS
